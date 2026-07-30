@@ -1,0 +1,209 @@
+return newcclosure(function()
+    local LocalizationService = game:GetService("LocalizationService")
+    local Translator = {}
+    local LangData = {}
+    local DefaultLangData = {}
+    local currentLangCode = "en-us"
+
+    local LangCodes = {
+        ["Deutsch"] = "de-de",
+        ["English"] = "en-us",
+        ["Español"] = "es-es",
+        ["Filipino"] = "fil-tg",
+        ["Français"] = "fr-fr",
+        ["Bahasa Indonesia"] = "id-id",
+        ["Português"] = "pt-br",
+        ["Tiếng Việt"] = "vi",
+        ["Русский"] = "ru"
+    }
+
+    local LangURLs = {
+        ["en-us"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/en-us.json",
+        ["es-es"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/es-es.json",
+        ["pt-br"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/pt-br.json",
+        ["ru"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/ru.json",
+        ["vi"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/vi.json",
+        ["fil-tg"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/fil-tg.json",
+        ["fr-fr"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/fr-fr.json",
+        ["de-de"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/de-de.json",
+        ["id-id"] = "https://raw.githubusercontent.com/not-gato/UNX/refs/heads/main/Modules/v3/Lang/id-id.json"
+    }
+
+    local function decodeJSON(str)
+        str = str:gsub("^%s+", ""):gsub("%s+$", "")
+        local pos = 1
+        local strLen = #str
+        local decode
+
+        local function skip_whitespace()
+            while pos <= strLen do
+                local b = string.byte(str, pos)
+                if b ~= 32 and b ~= 9 and b ~= 10 and b ~= 13 then break end
+                pos = pos + 1
+            end
+        end
+
+        local function decode_string()
+            local buf, n = {}, 0
+            pos = pos + 1
+            while pos <= strLen do
+                local b = string.byte(str, pos)
+                if b == 34 then
+                    pos = pos + 1
+                    return table.concat(buf, "", 1, n)
+                elseif b == 92 then
+                    pos = pos + 1
+                    local eb = string.byte(str, pos)
+                    n = n + 1
+                    if eb == 110 then buf[n] = "\n"
+                    elseif eb == 116 then buf[n] = "\t"
+                    elseif eb == 114 then buf[n] = "\r"
+                    elseif eb == 92 then buf[n] = "\\"
+                    elseif eb == 34 then buf[n] = '"'
+                    else buf[n] = str:sub(pos, pos) end
+                    pos = pos + 1
+                else
+                    n = n + 1
+                    buf[n] = str:sub(pos, pos)
+                    pos = pos + 1
+                end
+            end
+            return table.concat(buf, "", 1, n)
+        end
+
+        local function decode_object()
+            local obj = {}
+            pos = pos + 1
+            skip_whitespace()
+            if string.byte(str, pos) == 125 then
+                pos = pos + 1
+                return obj
+            end
+            while true do
+                skip_whitespace()
+                if string.byte(str, pos) ~= 34 then break end
+                local key = decode_string()
+                skip_whitespace()
+                if string.byte(str, pos) ~= 58 then break end
+                pos = pos + 1
+                skip_whitespace()
+                obj[key] = decode()
+                skip_whitespace()
+                local cb = string.byte(str, pos)
+                if cb == 125 then
+                    pos = pos + 1
+                    return obj
+                elseif cb == 44 then
+                    pos = pos + 1
+                else
+                    break
+                end
+            end
+            return obj
+        end
+
+        decode = function()
+            skip_whitespace()
+            local c = string.byte(str, pos)
+            if c == 123 then
+                return decode_object()
+            elseif c == 34 then
+                return decode_string()
+            end
+            return nil
+        end
+
+        return decode()
+    end
+
+    local function safeDecode(content)
+        content = content:gsub("^[\239\187\191]*", ""):gsub("^%s+", ""):gsub("%s+$", "")
+        local success, result = pcall(decodeJSON, content)
+        if not success then return {} end
+        if type(result) == "table" and next(result) then
+            return result
+        end
+        return {}
+    end
+
+    function Translator.Init()
+        if isfile("unxhub/language_config.txt") then
+            local fileContent = readfile("unxhub/language_config.txt")
+            currentLangCode = fileContent:match("^%s*(.-)%s*$")
+            if not currentLangCode or not LangURLs[currentLangCode] then
+                currentLangCode = "en-us"
+            end
+        else
+            local success, localeId = pcall(function() return LocalizationService.RobloxLocaleId end)
+            if success and localeId then
+                localeId = localeId:lower()
+                if LangURLs[localeId] then
+                    currentLangCode = localeId
+                else
+                    local prefix = localeId:match("^(%a+)")
+                    if prefix then
+                        if prefix == "es" and LangURLs["es-es"] then currentLangCode = "es-es"
+                        elseif prefix == "pt" and LangURLs["pt-br"] then currentLangCode = "pt-br"
+                        elseif prefix == "ru" and LangURLs["ru"] then currentLangCode = "ru"
+                        elseif prefix == "vi" and LangURLs["vi"] then currentLangCode = "vi"
+                        elseif prefix == "fil" and LangURLs["fil-tg"] then currentLangCode = "fil-tg"
+                        elseif prefix == "fr" and LangURLs["fr-fr"] then currentLangCode = "fr-fr"
+                        elseif prefix == "de" and LangURLs["de-de"] then currentLangCode = "de-de"
+                        elseif prefix == "id" and LangURLs["id-id"] then currentLangCode = "id-id"
+                        end
+                    end
+                end
+            end
+            writefile("unxhub/language_config.txt", currentLangCode)
+        end
+
+        local enCache = "unxhub/cache/lang_en-us.json"
+        if isfile(enCache) then
+            DefaultLangData = safeDecode(readfile(enCache))
+        else
+            local s, r = pcall(game.HttpGet, game, LangURLs["en-us"])
+            if s then
+                writefile(enCache, r)
+                DefaultLangData = safeDecode(r)
+            end
+        end
+
+        if currentLangCode ~= "en-us" then
+            local cacheFile = "unxhub/cache/lang_" .. currentLangCode .. ".json"
+            local targetData = {}
+            local loaded = false
+            if isfile(cacheFile) then
+                targetData = safeDecode(readfile(cacheFile))
+                if next(targetData) then loaded = true end
+            end
+            if not loaded and LangURLs[currentLangCode] then
+                local s, r = pcall(game.HttpGet, game, LangURLs[currentLangCode])
+                if s then
+                    writefile(cacheFile, r)
+                    targetData = safeDecode(r)
+                end
+            end
+            for k, v in pairs(targetData) do
+                LangData[k] = v
+            end
+        end
+    end
+
+    function Translator.T(text)
+        return LangData[text] or DefaultLangData[text] or text
+    end
+
+    function Translator.GetLangCode()
+        return currentLangCode
+    end
+
+    function Translator.GetLangCodes()
+        return LangCodes
+    end
+
+    function Translator.GetLangURLs()
+        return LangURLs
+    end
+
+    return Translator
+end)

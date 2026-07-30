@@ -1,0 +1,368 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	humanoid = newChar:WaitForChild("Humanoid")
+	rootPart = newChar:WaitForChild("HumanoidRootPart")
+end)
+
+local isMoving = false
+local moveDirection = Vector3.new(0, 0, -1)
+local relativeToCamera = true 
+
+local isSettingsOpen = false
+local timedWalkEnabled = false
+local walkDuration = 5 
+local currentWalkTime = 0
+local wallAvoidanceEnabled = false
+local showPathEnabled = false
+
+local THEME = {
+	Background = Color3.fromHex("0b0b0d"),
+	Outline    = Color3.fromHex("262434"),
+	Text       = Color3.fromHex("e8e6f2"),
+	TextDim    = Color3.fromHex("8a8a9e"),
+	BarEmpty   = Color3.fromHex("131218"),
+	BarFilled  = Color3.fromHex("a970ff"), 
+	BarDark    = Color3.fromHex("5a3c91"),
+	Stop       = Color3.fromRGB(200, 60, 60),
+	StopDark   = Color3.fromRGB(110, 30, 30)
+}
+
+local pathVisualizer = Instance.new("Part")
+pathVisualizer.Name = "PathVisualizer"
+pathVisualizer.Size = Vector3.new(1, 1, 1) 
+pathVisualizer.Shape = Enum.PartType.Ball
+pathVisualizer.Material = Enum.Material.ForceField
+pathVisualizer.Color = THEME.BarFilled
+pathVisualizer.CanCollide = false
+pathVisualizer.Anchored = true
+pathVisualizer.Transparency = 1 
+pathVisualizer.Parent = workspace
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "UNXHub_AutoWalk"
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+pcall(function() screenGui.Parent = CoreGui end)
+if not screenGui.Parent then screenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local function addCorner(instance, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius)
+	corner.Parent = instance
+	return corner
+end
+
+local function addStroke(instance, thickness, color)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or THEME.Outline
+	stroke.Thickness = thickness or 1.5
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = instance
+	return stroke
+end
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 0, 0, 0)
+mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+mainFrame.BackgroundColor3 = THEME.Background
+mainFrame.ClipsDescendants = true 
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+addCorner(mainFrame, 12)
+addStroke(mainFrame, 2, THEME.Outline)
+
+local title = Instance.new("TextLabel")
+title.Text = "UNXHub | Auto Walk"
+title.Size = UDim2.new(0, 180, 0, 40)
+title.Position = UDim2.new(0, 15, 0, 0)
+title.BackgroundTransparency = 1
+title.TextColor3 = THEME.Text
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = mainFrame
+
+local settingsBtn = Instance.new("TextButton")
+settingsBtn.Text = "⚙️"
+settingsBtn.Size = UDim2.new(0, 24, 0, 24)
+settingsBtn.Position = UDim2.new(0, 180, 0, 8)
+settingsBtn.BackgroundColor3 = THEME.BarEmpty
+settingsBtn.TextColor3 = THEME.TextDim
+settingsBtn.TextSize = 16
+settingsBtn.Parent = mainFrame
+addCorner(settingsBtn, 6)
+
+local controlsContainer = Instance.new("Frame")
+controlsContainer.Name = "Controls"
+controlsContainer.Size = UDim2.new(0, 220, 1, -40)
+controlsContainer.Position = UDim2.new(0, 0, 0, 40)
+controlsContainer.BackgroundTransparency = 1
+controlsContainer.Parent = mainFrame
+
+local settingsContainer = Instance.new("ScrollingFrame")
+settingsContainer.Name = "Settings"
+settingsContainer.Size = UDim2.new(0, 210, 1, -45)
+settingsContainer.Position = UDim2.new(0, 220, 0, 40) 
+settingsContainer.BackgroundTransparency = 1
+settingsContainer.BorderSizePixel = 0
+settingsContainer.ScrollBarThickness = 2
+settingsContainer.ScrollBarImageColor3 = THEME.BarFilled
+settingsContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y 
+settingsContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+settingsContainer.Parent = mainFrame
+
+local dropdownFrame = Instance.new("Frame")
+dropdownFrame.Size = UDim2.new(0, 190, 0, 30)
+dropdownFrame.Position = UDim2.new(0, 15, 0, 230)
+dropdownFrame.BackgroundColor3 = THEME.BarEmpty
+dropdownFrame.Parent = controlsContainer
+addCorner(dropdownFrame, 6)
+addStroke(dropdownFrame, 1.5, THEME.Outline)
+
+local modeLabel = Instance.new("TextLabel")
+modeLabel.Size = UDim2.new(1, 0, 1, 0)
+modeLabel.BackgroundTransparency = 1
+modeLabel.Text = "Camera Relative"
+modeLabel.TextColor3 = THEME.TextDim
+modeLabel.Font = Enum.Font.Gotham
+modeLabel.TextSize = 13
+modeLabel.Parent = dropdownFrame
+
+local switchModeBtn = Instance.new("TextButton")
+switchModeBtn.Size = UDim2.new(1,0,1,0)
+switchModeBtn.BackgroundTransparency = 1
+switchModeBtn.Text = ""
+switchModeBtn.Parent = dropdownFrame
+
+switchModeBtn.MouseButton1Click:Connect(function()
+	relativeToCamera = not relativeToCamera
+	modeLabel.Text = relativeToCamera and "Camera Relative" or "Position Relative"
+	modeLabel.TextColor3 = relativeToCamera and THEME.TextDim or THEME.BarFilled
+end)
+
+local function createDirButton(text, pos, vector)
+	local btn = Instance.new("TextButton")
+	btn.Text = text
+	btn.Size = UDim2.new(0, 40, 0, 40)
+	btn.Position = pos
+	btn.BackgroundColor3 = THEME.BarFilled
+	btn.TextColor3 = THEME.Text
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 20
+	btn.Parent = controlsContainer
+	addCorner(btn, 8)
+	addStroke(btn, 1.5, THEME.BarDark)
+	
+	btn.MouseButton1Click:Connect(function()
+		moveDirection = vector
+		isMoving = true
+		currentWalkTime = 0 
+	end)
+end
+
+createDirButton("▲", UDim2.new(0.5, -20, 0, 20), Vector3.new(0, 0, -1))
+createDirButton("▼", UDim2.new(0.5, -20, 0, 120), Vector3.new(0, 0, 1))
+createDirButton("◄", UDim2.new(0.5, -70, 0, 70), Vector3.new(-1, 0, 0))
+createDirButton("►", UDim2.new(0.5, 30, 0, 70), Vector3.new(1, 0, 0))
+
+local stopBtn = Instance.new("TextButton")
+stopBtn.Text = "■"
+stopBtn.Size = UDim2.new(0, 40, 0, 40)
+stopBtn.Position = UDim2.new(0.5, -20, 0, 70)
+stopBtn.BackgroundColor3 = THEME.Stop
+stopBtn.TextColor3 = THEME.Text
+stopBtn.Font = Enum.Font.GothamBold
+stopBtn.TextSize = 20
+stopBtn.Parent = controlsContainer
+addCorner(stopBtn, 8)
+addStroke(stopBtn, 1.5, THEME.StopDark)
+
+stopBtn.MouseButton1Click:Connect(function()
+	isMoving = false
+	pathVisualizer.Transparency = 1
+	if humanoid then humanoid:Move(Vector3.zero) end
+end)
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Parent = settingsContainer
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 12)
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local padding = Instance.new("UIPadding")
+padding.PaddingTop = UDim.new(0, 10)
+padding.Parent = settingsContainer
+
+local function createToggle(text, order, callback)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 190, 0, 36)
+	frame.BackgroundColor3 = THEME.BarEmpty
+	frame.LayoutOrder = order
+	frame.Parent = settingsContainer
+	addCorner(frame, 8)
+	addStroke(frame, 1, THEME.Outline)
+	
+	local lbl = Instance.new("TextLabel")
+	lbl.Text = text
+	lbl.Size = UDim2.new(0, 130, 1, 0)
+	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.TextColor3 = THEME.TextDim
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 13
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = frame
+	
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 20, 0, 20)
+	toggleBtn.Position = UDim2.new(1, -30, 0.5, -10)
+	toggleBtn.BackgroundColor3 = THEME.Background
+	toggleBtn.Text = ""
+	toggleBtn.Parent = frame
+	addCorner(toggleBtn, 4)
+	addStroke(toggleBtn, 1, THEME.TextDim)
+	
+	local toggled = false
+	toggleBtn.MouseButton1Click:Connect(function()
+		toggled = not toggled
+		if toggled then
+			TweenService:Create(toggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = THEME.BarFilled}):Play()
+			toggleBtn.UIStroke.Color = THEME.BarDark
+			lbl.TextColor3 = THEME.Text
+		else
+			TweenService:Create(toggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = THEME.Background}):Play()
+			toggleBtn.UIStroke.Color = THEME.TextDim
+			lbl.TextColor3 = THEME.TextDim
+		end
+		callback(toggled)
+	end)
+end
+
+createToggle("Timed Walk", 1, function(val) timedWalkEnabled = val currentWalkTime = 0 end)
+
+local timeFrame = Instance.new("Frame")
+timeFrame.Size = UDim2.new(0, 190, 0, 36)
+timeFrame.BackgroundColor3 = THEME.BarEmpty
+timeFrame.LayoutOrder = 2
+timeFrame.Parent = settingsContainer
+addCorner(timeFrame, 8)
+addStroke(timeFrame, 1, THEME.Outline)
+
+local timeLbl = Instance.new("TextLabel")
+timeLbl.Text = "Seconds:"
+timeLbl.Size = UDim2.new(0, 70, 1, 0)
+timeLbl.Position = UDim2.new(0, 10, 0, 0)
+timeLbl.BackgroundTransparency = 1
+timeLbl.TextColor3 = THEME.TextDim
+timeLbl.Font = Enum.Font.GothamMedium
+timeLbl.TextSize = 13
+timeLbl.TextXAlignment = Enum.TextXAlignment.Left
+timeLbl.Parent = timeFrame
+
+local timeBox = Instance.new("TextBox")
+timeBox.Text = "5"
+timeBox.Size = UDim2.new(0, 60, 0, 24)
+timeBox.Position = UDim2.new(1, -70, 0.5, -12)
+timeBox.BackgroundColor3 = THEME.Background
+timeBox.TextColor3 = THEME.BarFilled
+timeBox.Font = Enum.Font.GothamBold
+timeBox.TextSize = 14
+timeBox.Parent = timeFrame
+addCorner(timeBox, 4)
+addStroke(timeBox, 1, THEME.Outline)
+
+timeBox.FocusLost:Connect(function()
+	local num = tonumber(timeBox.Text)
+	if num then walkDuration = num else timeBox.Text = tostring(walkDuration) end
+end)
+
+createToggle("Avoid Walls (Beta)", 3, function(val) wallAvoidanceEnabled = val end)
+createToggle("Show Path", 4, function(val) showPathEnabled = val end)
+
+settingsBtn.MouseButton1Click:Connect(function()
+	isSettingsOpen = not isSettingsOpen
+	local targetSize = isSettingsOpen and UDim2.new(0, 430, 0, 320) or UDim2.new(0, 220, 0, 320)
+	TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Size = targetSize}):Play()
+	TweenService:Create(settingsBtn, TweenInfo.new(0.4), {Rotation = isSettingsOpen and 90 or 0}):Play()
+end)
+
+local function getAvoidanceDirection(targetDir)
+	local checkDist = 10 
+	
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = {character, pathVisualizer}
+	params.FilterType = Enum.RaycastFilterType.Exclude
+
+	local hitMain = workspace:Raycast(rootPart.Position, targetDir * checkDist, params)
+	if not hitMain then return targetDir end
+	
+	local lookCf = CFrame.lookAt(Vector3.zero, targetDir)
+	local rightVec = lookCf.RightVector
+	local leftVec = -rightVec
+	local backVec = -targetDir
+	
+	local canGoRight = not workspace:Raycast(rootPart.Position, rightVec * checkDist, params)
+	local canGoLeft = not workspace:Raycast(rootPart.Position, leftVec * checkDist, params)
+	local canGoBack = not workspace:Raycast(rootPart.Position, backVec * checkDist, params)
+	
+	if canGoRight then return rightVec
+	elseif canGoLeft then return leftVec
+	elseif canGoBack then return backVec
+	else return Vector3.zero end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	if not character or not humanoid or not rootPart then return end
+
+	if isMoving then
+		local baseDir = moveDirection
+		if relativeToCamera then
+			local camCFrame = camera.CFrame
+			baseDir = (camCFrame:VectorToWorldSpace(moveDirection)).Unit
+			baseDir = Vector3.new(baseDir.X, 0, baseDir.Z).Unit
+		end
+		
+		if wallAvoidanceEnabled then
+			baseDir = getAvoidanceDirection(baseDir)
+		end
+		
+		humanoid:Move(baseDir, false)
+		
+		if showPathEnabled then
+			pathVisualizer.Transparency = 0.5
+			pathVisualizer.Position = rootPart.Position + (baseDir * 3)
+		else
+			pathVisualizer.Transparency = 1
+		end
+		
+		if timedWalkEnabled then
+			currentWalkTime = currentWalkTime + dt
+			if currentWalkTime >= walkDuration then
+				isMoving = false
+				humanoid:Move(Vector3.zero)
+				pathVisualizer.Transparency = 1
+			end
+		end
+	else
+		pathVisualizer.Transparency = 1
+	end
+end)
+
+TweenService:Create(mainFrame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+	Size = UDim2.new(0, 220, 0, 320),
+	Position = UDim2.new(0.5, -110, 0.5, -160)
+}):Play()

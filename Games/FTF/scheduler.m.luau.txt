@@ -1,0 +1,113 @@
+return newcclosure(function(Library, Tabs, RootMaid, CacheManager, MaidClass)
+    local RunService = game:GetService("RunService")
+    local clock = os.clock
+    local spawn = task.spawn
+    local delay = task.delay
+    local cancel = task.cancel
+    local max = math.max
+
+    local Scheduler = {
+        Throttle = 0,
+        RGBThrottle = 0,
+    }
+
+    local SchedulerMaid = MaidClass.new()
+    RootMaid:GiveTask(SchedulerMaid)
+
+    local ActiveIntervals = {}
+
+    SchedulerMaid:GiveTask(RunService.Heartbeat:Connect(newcclosure(function()
+        local now = clock()
+
+        for i = #ActiveIntervals, 1, -1 do
+            local taskObj = ActiveIntervals[i]
+            if not taskObj.Destroyed then
+                local effectiveRate = max(taskObj.Rate, Scheduler.Throttle)
+                if not taskObj.Paused and now - taskObj.LastRun >= effectiveRate then
+                    taskObj.LastRun = now
+                    spawn(taskObj.Callback)
+                end
+            end
+        end
+    end)))
+
+    Scheduler.Interval = newcclosure(function(seconds, callback)
+        local taskObj = {
+            Rate = seconds,
+            Callback = callback,
+            LastRun = clock(),
+            Paused = false,
+            Destroyed = false,
+        }
+
+        ActiveIntervals[#ActiveIntervals + 1] = taskObj
+
+        function taskObj:Pause()
+            self.Paused = true
+        end
+
+        function taskObj:Resume()
+            self.Paused = false
+            self.LastRun = clock()
+        end
+
+        function taskObj:RunNow()
+            self.LastRun = clock()
+            spawn(self.Callback)
+        end
+
+        function taskObj:Disconnect()
+            if self.Destroyed then
+                return
+            end
+
+            self.Destroyed = true
+
+            local last = #ActiveIntervals
+            for i = 1, last do
+                if ActiveIntervals[i] == self then
+                    ActiveIntervals[i] = ActiveIntervals[last]
+                    ActiveIntervals[last] = nil
+                    break
+                end
+            end
+        end
+
+        taskObj.Destroy = taskObj.Disconnect
+
+        SchedulerMaid:GiveTask(newcclosure(function()
+            taskObj:Disconnect()
+        end))
+
+        return taskObj
+    end)
+
+    Scheduler.Delay = newcclosure(function(seconds, callback)
+        local thread = delay(seconds, callback)
+        SchedulerMaid:GiveTask(newcclosure(function()
+            if thread then
+                cancel(thread)
+            end
+        end))
+        return thread
+    end)
+
+    Scheduler.Render = newcclosure(function(callback)
+        local conn = RunService.RenderStepped:Connect(callback)
+        SchedulerMaid:GiveTask(conn)
+        return conn
+    end)
+
+    Scheduler.Heartbeat = newcclosure(function(callback)
+        local conn = RunService.Heartbeat:Connect(callback)
+        SchedulerMaid:GiveTask(conn)
+        return conn
+    end)
+
+    getgenv().Scheduler = Scheduler
+    RootMaid:GiveTask(newcclosure(function()
+        getgenv().Scheduler = nil
+    end))
+
+    return Scheduler
+end)

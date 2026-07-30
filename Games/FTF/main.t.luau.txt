@@ -1,0 +1,478 @@
+return newcclosure(function(Library, Tabs, RootMaid, CacheManager, MaidClass, Scheduler, Translator)
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local TweenService = game:GetService("TweenService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local LocalPlayer = Players.LocalPlayer
+    local Camera = workspace.CurrentCamera
+    local Options = Library.Options
+    local Toggles = Library.Toggles
+    local T = Translator.T
+    local BindModule = loadstring(game:HttpGet("https://apigetunx.vercel.app/Modules/v2/Bind.lua"))()
+
+    local ModuleMaid = MaidClass.new()
+    RootMaid:GiveTask(ModuleMaid)
+    RootMaid:GiveTask(newcclosure(function() if BindModule then BindModule:Kill() end end))
+
+    RootMaid:GiveTask(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(newcclosure(function()
+        Camera = workspace.CurrentCamera
+    end)))
+
+    local function ArraysMatch(t1, t2)
+        if #t1 ~= #t2 then return false end
+        for i, v in ipairs(t1) do
+            if t2[i] ~= v then return false end
+        end
+        return true
+    end
+
+    local _cachedControlModule = nil
+    local function getControlModule()
+        if _cachedControlModule then return _cachedControlModule end
+        local ps = LocalPlayer.PlayerScripts
+        if not ps then return nil end
+        local pm = ps:FindFirstChild("PlayerModule")
+        if not pm then return nil end
+        local cmScript = pm:FindFirstChild("ControlModule")
+        if not cmScript then return nil end
+        local ok, result = pcall(require, cmScript)
+        if ok and result then
+            _cachedControlModule = result
+        end
+        return _cachedControlModule
+    end
+
+    local MovementManager = {}
+
+    MovementManager.StartFlying = newcclosure(function(maid, speed)
+        maid:DoCleaning()
+        local flyMaid = MaidClass.new()
+        maid:GiveTask(flyMaid)
+
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChild("Humanoid")
+        local rootpart = character:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not rootpart then return end
+
+        humanoid.PlatformStand = true
+        flyMaid:GiveTask(newcclosure(function()
+            if humanoid then humanoid.PlatformStand = false end
+        end))
+
+        local bodyVelocity = Instance.new("BodyVelocity")
+        bodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+        bodyVelocity.Velocity = Vector3.zero
+        bodyVelocity.Parent = rootpart
+        flyMaid:GiveTask(bodyVelocity)
+
+        local bodyGyro = Instance.new("BodyGyro")
+        bodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+        bodyGyro.P = 10000
+        bodyGyro.D = 500
+        bodyGyro.Parent = rootpart
+        flyMaid:GiveTask(bodyGyro)
+
+        flyMaid:GiveTask(RunService.Heartbeat:Connect(newcclosure(function()
+            if not humanoid or not rootpart or not bodyVelocity.Parent or not bodyGyro.Parent then return end
+            local cm = getControlModule()
+            if not cm then return end
+            local mv = cm:GetMoveVector()
+            local dir = Camera.CFrame:VectorToWorldSpace(mv)
+            bodyVelocity.Velocity = dir * (speed * 10)
+            bodyGyro.CFrame = Camera.CFrame
+        end)))
+    end)
+
+    MovementManager.SmartTeleport = newcclosure(function(targetPos)
+        local char = LocalPlayer.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+
+        local root = char.HumanoidRootPart
+        local teleportType = Options.TeleportType and Options.TeleportType.Value or "Instant (TP)"
+        local useNoclip = Toggles.NoclipOnTween and Toggles.NoclipOnTween.Value or false
+        local originalNoclip = Toggles.NoClip and Toggles.NoClip.Value or false
+
+        if teleportType == "Instant (TP)" then
+            root.CFrame = CFrame.new(targetPos)
+            return
+        end
+
+        local distance = (root.Position - targetPos).Magnitude
+        local tweenSpeed = Options.TweenSpeed and Options.TweenSpeed.Value or 100
+        local duration = distance / tweenSpeed
+        if duration <= 0 then duration = 0.1 end
+
+        local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+        local tween = TweenService:Create(root, tweenInfo, {CFrame = CFrame.new(targetPos)})
+
+        if useNoclip and Toggles.NoClip then
+            Toggles.NoClip:SetValue(true)
+        end
+
+        tween:Play()
+        tween.Completed:Connect(newcclosure(function()
+            if useNoclip and not originalNoclip and Toggles.NoClip then
+                Toggles.NoClip:SetValue(false)
+            end
+        end))
+    end)
+
+    local MainCharacterGB = Tabs.Main:AddLeftGroupbox(T("Character"), "user")
+    local MainFlyGB = Tabs.Main:AddRightGroupbox(T("Fly"), "plane")
+    local MainOtherGB = Tabs.Main:AddRightGroupbox(T("Other"), "package")
+
+    MainCharacterGB:AddToggle("LockWalkSpeed", {Text = T("Lock Walkspeed Value"), Default = true})
+    MainCharacterGB:AddSlider("WalkSpeed", {Text = T("Walk Speed"), Default = 16, Min = 16, Max = 100, Rounding = 0})
+
+    MainCharacterGB:AddToggle("WalkspeedBindToggle", {
+        Text = T("Walkspeed BindButton"),
+        Default = false,
+        Callback = newcclosure(function(v)
+            if v and BindModule then
+                BindModule:AddToggleBB("WalkSpeed",
+                    newcclosure(function() if Toggles.LockWalkSpeed then Toggles.LockWalkSpeed:SetValue(true) end end),
+                    newcclosure(function() if Toggles.LockWalkSpeed then Toggles.LockWalkSpeed:SetValue(false) end end)
+                )
+            elseif BindModule then
+                BindModule:DelBindB("WalkSpeed")
+            end
+        end)
+    })
+
+    MainCharacterGB:AddSlider("JumpPower", {Text = T("Jump Power"), Default = 50, Min = 50, Max = 250, Rounding = 0})
+    MainCharacterGB:AddSlider("MaxZoom", {Text = T("Max Zoom"), Default = 128, Min = 0, Max = 800, Rounding = 0})
+    MainCharacterGB:AddToggle("NoVelocity", {Text = T("No Velocity"), Default = false})
+    MainCharacterGB:AddDivider()
+
+    local AutoInteractMaid = MaidClass.new()
+    ModuleMaid:GiveTask(AutoInteractMaid)
+    MainCharacterGB:AddToggle("AutoInteract", {Text = T("Auto Interact"), Default = false})
+    MainCharacterGB:AddDropdown("AutoInteractConditions", {
+        Text = T("Auto Interact Conditions"),
+        Values = {"Near PC", "Near Exit Door", "Near Freeze Pod"},
+        Default = {"Near PC", "Near Exit Door", "Near Freeze Pod"},
+        Multi = true,
+    })
+    MainCharacterGB:AddDivider()
+
+    MainCharacterGB:AddToggle("NoClip", {Text = T("No-Clip"), Default = false})
+    Toggles.NoClip:AddKeyPicker("NoclipKeybind", {Default = "N", Mode = "Toggle", Text = "Noclip", SyncToggleState = true})
+
+    MainCharacterGB:AddToggle("InfiniteJump", {Text = T("Infinite Jump"), Default = false})
+    MainCharacterGB:AddToggle("SpeedGlitch", {Text = T("Speed Glitch"), Default = false})
+    MainCharacterGB:AddSlider("SpeedGlitchForce", {Text = T("Speed Glitch Force"), Default = 100, Min = 1, Max = 250, Rounding = 0})
+    MainCharacterGB:AddDropdown("SpeedGlitchMethod", {Text = T("Speed Glitch Method"), Values = {"Speed", "Body Velocity"}, Default = 2})
+
+    MainCharacterGB:AddDivider()
+    MainCharacterGB:AddToggle("BunnyHop", {Text = T("Bunny Hop"), Default = false})
+    MainCharacterGB:AddSlider("BunnyHopDelay", {Text = T("Bunny Hop Delay (s)"), Default = 0.2, Min = 0, Max = 3, Rounding = 2})
+
+    local FlyMaid = MaidClass.new()
+    ModuleMaid:GiveTask(FlyMaid)
+    local flySpeed = 5
+
+    MainFlyGB:AddToggle("Fly", {Text = T("Enable Fly"), Default = false, Callback = newcclosure(function(v)
+        if v then MovementManager.StartFlying(FlyMaid, flySpeed) else FlyMaid:DoCleaning() end
+    end)})
+    Toggles.Fly:AddKeyPicker("FlyKeybind", {Default = "F", Mode = "Toggle", Text = "Fly", SyncToggleState = true})
+    MainFlyGB:AddSlider("FlySpeed", {Text = T("Fly Speed"), Default = 5, Min = 1, Max = 75, Rounding = 0, Callback = newcclosure(function(v) flySpeed = v end)})
+
+    ModuleMaid:GiveTask(LocalPlayer.CharacterAdded:Connect(newcclosure(function(c)
+        if Toggles.Fly.Value then task.wait(0.5) MovementManager.StartFlying(FlyMaid, flySpeed) end
+    end)))
+
+    local TeleportLocations = {
+        Cabin = Vector3.new(104, 8, -417),
+        ["Map Voting #1"] = Vector3.new(148, 4, -334),
+        ["Map Voting #2"] = Vector3.new(153, 4, -333),
+        ["Map Voting #3"] = Vector3.new(159, 4, -333),
+        ["Map Voting #4"] = Vector3.new(166, 4, -333),
+    }
+
+    MainOtherGB:AddButton(T("Teleport (Cabin)"), newcclosure(function() MovementManager.SmartTeleport(TeleportLocations.Cabin) end))
+    MainOtherGB:AddDivider()
+    MainOtherGB:AddButton(T("Teleport (Map Voting #1)"), newcclosure(function() MovementManager.SmartTeleport(TeleportLocations["Map Voting #1"]) end))
+    MainOtherGB:AddButton(T("Teleport (Map Voting #2)"), newcclosure(function() MovementManager.SmartTeleport(TeleportLocations["Map Voting #2"]) end))
+    MainOtherGB:AddButton(T("Teleport (Map Voting #3)"), newcclosure(function() MovementManager.SmartTeleport(TeleportLocations["Map Voting #3"]) end))
+    MainOtherGB:AddButton(T("Teleport (Map Voting #4)"), newcclosure(function() MovementManager.SmartTeleport(TeleportLocations["Map Voting #4"]) end))
+
+    MainOtherGB:AddButton(T("Teleport (Beast)"), newcclosure(function()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Hammer") then
+                local root = player.Character:FindFirstChild("HumanoidRootPart")
+                if root then MovementManager.SmartTeleport(root.Position + Vector3.new(0, 5, 0)); break end
+            end
+        end
+    end))
+
+    MainOtherGB:AddDropdown("SurvivorDropdown", {Text = T("Survivors"), Values = {}, Default = 1, Searchable = true, Scrollable = true})
+
+    MainOtherGB:AddButton(T("Teleport (Survivor)"), newcclosure(function()
+        local target = Options.SurvivorDropdown and Options.SurvivorDropdown.Value
+        if target and target ~= "No Survivors" then
+            local player = Players:FindFirstChild(target)
+            if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                MovementManager.SmartTeleport(player.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0))
+            end
+        end
+    end))
+
+    MainOtherGB:AddDropdown("ComputerDropdown", {Text = T("Computers"), Values = {}, Default = 1, Searchable = true, Scrollable = true})
+
+    MainOtherGB:AddButton(T("Teleport (Computer)"), newcclosure(function()
+        local target = Options.ComputerDropdown and Options.ComputerDropdown.Value
+        if target and target ~= "No Computers" then
+            local index = tonumber(target:match("#(%d+)"))
+            if index and CacheManager.Computers[index] then
+                MovementManager.SmartTeleport(CacheManager.Computers[index]:GetPivot().Position + Vector3.new(0, 5, 0))
+            end
+        end
+    end))
+
+    MainOtherGB:AddLabel(T("Other"))
+    MainOtherGB:AddDivider()
+    MainOtherGB:AddDropdown("TeleportType", {Text = T("Teleport Type"), Values = {"Instant (TP)", "Slow (Tween)"}, Default = 1})
+    MainOtherGB:AddSlider("TweenSpeed", {Text = T("Tween Speed (Studs/s)"), Default = 100, Min = 1, Max = 250, Rounding = 0})
+    MainOtherGB:AddToggle("NoclipOnTween", {Text = T("Noclip On Tween"), Default = true})
+
+    local ApplyCharacterMods = newcclosure(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = Options.WalkSpeed and Options.WalkSpeed.Value or 16
+            hum.JumpPower = Options.JumpPower and Options.JumpPower.Value or 50
+        end
+    end)
+
+    local ApplyZoom = newcclosure(function() LocalPlayer.CameraMaxZoomDistance = Options.MaxZoom and Options.MaxZoom.Value or 128 end)
+
+    local ApplyNoVelocity = newcclosure(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end)
+
+    ModuleMaid:GiveTask(game:GetService("UserInputService").JumpRequest:Connect(newcclosure(function()
+        if Toggles.InfiniteJump and Toggles.InfiniteJump.Value then
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end
+    end)))
+
+    local setupSpeedGlitch = newcclosure(function(char)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if not hum then return end
+        ModuleMaid:GiveTask(hum.StateChanged:Connect(newcclosure(function(old, new)
+            if new == Enum.HumanoidStateType.Jumping and Toggles.SpeedGlitch and Toggles.SpeedGlitch.Value then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root or hum.MoveDirection.Magnitude <= 0 then return end
+                local force = Options.SpeedGlitchForce.Value
+                if Options.SpeedGlitchMethod.Value == "Body Velocity" then
+                    local bv = Instance.new("BodyVelocity")
+                    bv.MaxForce = Vector3.new(1e5, 0, 1e5)
+                    bv.Velocity = hum.MoveDirection * force
+                    bv.Parent = root
+                    game:GetService("Debris"):AddItem(bv, 0.1)
+                else
+                    local oldWs = hum.WalkSpeed
+                    hum.WalkSpeed = force
+                    task.delay(0.1, function() if hum then hum.WalkSpeed = oldWs end end)
+                end
+            end
+        end)))
+    end)
+
+    local noclipPartCache = {}
+    local function refreshNoclipCache(char)
+        table.clear(noclipPartCache)
+        if not char then return end
+        for _, v in ipairs(char:GetDescendants()) do
+            if v:IsA("BasePart") then
+                noclipPartCache[#noclipPartCache + 1] = v
+            end
+        end
+    end
+
+    if LocalPlayer.Character then
+        refreshNoclipCache(LocalPlayer.Character)
+    end
+
+    ModuleMaid:GiveTask(RunService.Stepped:Connect(newcclosure(function()
+        if Toggles.NoClip and Toggles.NoClip.Value then
+            for i = 1, #noclipPartCache do
+                local part = noclipPartCache[i]
+                if part.Parent then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)))
+
+    local BHopMaid = MaidClass.new()
+    ModuleMaid:GiveTask(BHopMaid)
+    local lastJump = 0
+
+    local ToggleBunnyHop = newcclosure(function()
+        BHopMaid:DoCleaning()
+        if Toggles.BunnyHop and Toggles.BunnyHop.Value then
+            BHopMaid:GiveTask(RunService.Heartbeat:Connect(newcclosure(function()
+                local char = LocalPlayer.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.FloorMaterial == Enum.Material.Air then return end
+                local delay = Options.BunnyHopDelay and Options.BunnyHopDelay.Value or 0.2
+                if tick() - lastJump >= delay then
+                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                    lastJump = tick()
+                end
+            end)))
+        end
+    end)
+
+    task.spawn(function()
+        while not Options.WalkSpeed do task.wait() end
+        Options.MaxZoom:OnChanged(ApplyZoom)
+        Toggles.BunnyHop:OnChanged(ToggleBunnyHop)
+        Options.BunnyHopDelay:OnChanged(newcclosure(function() if Toggles.BunnyHop and Toggles.BunnyHop.Value then ToggleBunnyHop() end end))
+    end)
+
+    ModuleMaid:GiveTask(LocalPlayer.CharacterAdded:Connect(newcclosure(function(c)
+        task.wait(0.1)
+        refreshNoclipCache(c)
+        if Toggles.LockWalkSpeed.Value then ApplyCharacterMods() end
+        ApplyZoom()
+        setupSpeedGlitch(c)
+        if Toggles.BunnyHop and Toggles.BunnyHop.Value then ToggleBunnyHop() end
+    end)))
+
+    ModuleMaid:GiveTask(RunService.Heartbeat:Connect(newcclosure(function()
+        if Toggles.NoVelocity and Toggles.NoVelocity.Value then ApplyNoVelocity() end
+        if Toggles.LockWalkSpeed and Toggles.LockWalkSpeed.Value then ApplyCharacterMods() end
+    end)))
+
+    if LocalPlayer.Character then ApplyCharacterMods(); ApplyZoom(); setupSpeedGlitch(LocalPlayer.Character) end
+
+    if Scheduler then
+        ModuleMaid:GiveTask(Scheduler.Interval(1, newcclosure(function()
+            local newSurvivors = {}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character and not player.Character:FindFirstChild("Hammer") then
+                    table.insert(newSurvivors, player.DisplayName)
+                end
+            end
+            if #newSurvivors == 0 then newSurvivors = {"No Survivors"} end
+
+            if Options.SurvivorDropdown then
+                if not ArraysMatch(Options.SurvivorDropdown.Values, newSurvivors) then
+                    Options.SurvivorDropdown:SetValues(newSurvivors)
+                    if not table.find(newSurvivors, Options.SurvivorDropdown.Value) then Options.SurvivorDropdown:SetValue(newSurvivors[1]) end
+                end
+            end
+
+            local newComputers = {}
+            for i, _ in ipairs(CacheManager.Computers) do table.insert(newComputers, "Computer #" .. i) end
+            if #newComputers == 0 then newComputers = {"No Computers"} end
+
+            if Options.ComputerDropdown then
+                if not ArraysMatch(Options.ComputerDropdown.Values, newComputers) then
+                    Options.ComputerDropdown:SetValues(newComputers)
+                    if not table.find(newComputers, Options.ComputerDropdown.Value) then Options.ComputerDropdown:SetValue(newComputers[1]) end
+                end
+            end
+        end)))
+    end
+
+    local isConditionEnabled = newcclosure(function(name)
+        local val = Options.AutoInteractConditions.Value
+        if type(val) == "table" then
+            return val[name] == true or (type(val[1]) == "string" and table.find(val, name))
+        end
+        return false
+    end)
+
+    local interactedObjects = {}
+    local InteractRemote = ReplicatedStorage:WaitForChild("RemoteEvent", 5)
+
+    local RunAutoInteract = newcclosure(function()
+        if not Toggles.AutoInteract.Value then return end
+
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        if not InteractRemote then
+            InteractRemote = ReplicatedStorage:FindFirstChild("RemoteEvent")
+            return
+        end
+
+        local function doInteract()
+            InteractRemote:FireServer("Input", "Action", true)
+        end
+
+        local pcEnabled = isConditionEnabled("Near PC")
+        local podEnabled = isConditionEnabled("Near Freeze Pod")
+        local exitEnabled = isConditionEnabled("Near Exit Door")
+
+        if pcEnabled then
+            local computers = CacheManager.Computers
+            for i = 1, #computers do
+                local obj = computers[i]
+                if obj and obj.Parent then
+                    local screen = obj:FindFirstChild("Screen")
+                    local pos = (screen and screen.Position) or obj:GetPivot().Position
+                    if (root.Position - pos).Magnitude <= 6 then
+                        if screen then
+                            local c = screen.Color
+                            if not (math.abs(c.R * 255 - 40) < 5 and math.abs(c.G * 255 - 127) < 5 and math.abs(c.B * 255 - 71) < 5) then
+                                doInteract()
+                            end
+                        else
+                            doInteract()
+                        end
+                    end
+                end
+            end
+        end
+
+        if podEnabled then
+            local pods = CacheManager.Pods
+            for i = 1, #pods do
+                local obj = pods[i]
+                if obj and obj.Parent then
+                    local pos = obj:GetPivot().Position
+                    if (root.Position - pos).Magnitude <= 10 then
+                        doInteract()
+                    end
+                end
+            end
+        end
+
+        if exitEnabled then
+            local exits = CacheManager.Exits
+            for i = 1, #exits do
+                local obj = exits[i]
+                if obj and obj.Parent then
+                    if (root.Position - obj.Position).Magnitude <= 10 then
+                        if not interactedObjects[obj] then
+                            doInteract()
+                            interactedObjects[obj] = true
+                        end
+                    else
+                        interactedObjects[obj] = nil
+                    end
+                end
+            end
+        end
+    end)
+
+    AutoInteractMaid:GiveTask(RunService.Heartbeat:Connect(RunAutoInteract))
+end)
