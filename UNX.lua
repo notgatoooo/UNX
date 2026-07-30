@@ -291,8 +291,8 @@ local function startui()
 	task.wait(0.8)
 
 	local kpath = "unxhub/cache/savedkey.unx"
-	local vkey = "idkbrodontask"
-	local okeys = {"unxhub2025","unxhubontopbruh","unxhubbestflickscriptfr","GGOPFEATURES","2.6.0","pluh","whateverthiskeyis","peakunxhub","unxhubispeakstuff","theworldisfullofcruelpeople","keykeykeykeykey","2.7.0_TUFF","2.7.1_UNTUFF","gay-goof-lmfao","3.0.0_when_today:fish:","i_guess_bro","plskey","K8!t2typl6ak4"}
+	local vkey = "UNX_FREE_KEYJAO4!QMWI!4ZH22E5!H1AIX2!4H6"
+	local okeys = {"unxhub2025","unxhubontopbruh","unxhubbestflickscriptfr","GGOPFEATURES","2.6.0","pluh","whateverthiskeyis","peakunxhub","unxhubispeakstuff","theworldisfullofcruelpeople","keykeykeykeykey","2.7.0_TUFF","2.7.1_UNTUFF","gay-goof-lmfao","3.0.0_when_today:fish:","i_guess_bro","plskey","K8!t2typl6ak4", "idkbrodontask"}
 	local ok = false
 
 	if isfile(kpath) then
