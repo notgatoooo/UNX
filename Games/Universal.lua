@@ -1,5 +1,11 @@
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 
+ah = ...
+
+if ah then
+	print(ah)
+end
+
 local Maid = loadstring([[
 local Maid = {}
 Maid.ClassName = "Maid"
