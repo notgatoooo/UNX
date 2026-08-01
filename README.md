@@ -39,5 +39,5 @@ loadstring(game:HttpGet("https://api.getunx.cc/UNX.lua",true))()
 
 ## **Screenshot**
 
-![UNXHub](https://github.com/not-gato/UNX/raw/refs/heads/main/Modules/v2/Other/Screen01.png)
+![UNXHub](https://github.com/notgatoooo/UNX/raw/refs/heads/main/Modules/v2/Other/Screen01.png)
 **OLD SCREENSHOT!**
