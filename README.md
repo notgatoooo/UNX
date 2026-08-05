@@ -9,7 +9,7 @@
 ## **UNXHub Loader**
 
 ```luau
-loadstring(game:HttpGet("https://api.getunx.cc/UNX.lua",true))()
+loadstring(game:HttpGetAsync("https://api.getunx.cc/UNX.lua",true))()
 ```
 
 ---
