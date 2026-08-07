@@ -1,3 +1,5 @@
+game:GetService("Players").LocalPlayer:Kick("[UNXHub]: Unknown runtime error!\ndoes your executor support the required functions?")
+
 --[[
 
 why are we skidding?
