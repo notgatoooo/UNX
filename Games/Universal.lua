@@ -1,10 +1,14 @@
+-- telling ya they onto me
+
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 
+--[[
 ah = ...
 
 if ah then
 	print(ah)
 end
+]]
 
 local Maid = loadstring([[
 local Maid = {}
@@ -144,7 +148,6 @@ local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 local TextChatService = game:GetService("TextChatService")
-local Teams = game:GetService("Teams")
 local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -198,6 +201,56 @@ local PITCH_LIMIT = rad(87)
 local BTN_IDLE = Color3_fromHex("0b0b0d")
 local BTN_HELD = Color3_fromHex("262434")
 local BTN_STROKE = Color3_fromHex("262434")
+
+local function resolveFont(name)
+	if type(name) ~= "string" or name == "" or name == "Unknown" then
+		return nil
+	end
+
+	local okEnum, enumItem = pcall(function()
+		return Enum.Font[name]
+	end)
+	if not okEnum or typeof(enumItem) ~= "EnumItem" then
+		return nil
+	end
+
+	local okFace, face = pcall(function()
+		return Font.fromEnum(enumItem)
+	end)
+	if okFace and typeof(face) == "Font" then
+		return face
+	end
+
+	return enumItem
+end
+
+local function applyFont(textObject, font)
+	if font == nil then
+		return
+	end
+	if typeof(font) == "Font" then
+		textObject.FontFace = font
+	else
+		textObject.Font = font
+	end
+end
+
+local FONT_NAMES = {}
+local FONT_VALUES = {}
+do
+	local candidates = { "BuilderSans", "SourceSans", "SourceSansBold", "Roboto", "Arcade", "Gotham", "GothamBold", "Oswald", "Code", "SciFi", "Bodoni", "AmaticSC" }
+	for i = 1, #candidates do
+		local name = candidates[i]
+		local font = resolveFont(name)
+		if font ~= nil then
+			FONT_NAMES[#FONT_NAMES + 1] = name
+			FONT_VALUES[name] = font
+		end
+	end
+end
+
+local DEFAULT_FONT = FONT_VALUES[FONT_NAMES[1]]
+local BUTTON_FONT = resolveFont("GothamBold") or resolveFont("SourceSansBold") or DEFAULT_FONT
 
 local HasDrawing = false
 pcall(function()
@@ -491,26 +544,194 @@ if not character then
 	end)
 end
 
-local function getTeamList()
-	local list = {}
-	local n = 0
-	for _, team in ipairs(Teams:GetTeams()) do
-		n += 1
-		list[n] = team.Name
+local function inSet(set, instance, name)
+	if type(set) ~= "table" then
+		return false
 	end
-	return list
+	if set[instance] == true then
+		return true
+	end
+	return name ~= nil and set[name] == true
 end
 
-local function getPlayerList()
-	local list = {}
-	local n = 0
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player then
-			n += 1
-			list[n] = p.Name
+local function resolvePlayerValue(value)
+	if value == nil then
+		return nil
+	end
+	if typeof(value) == "Instance" then
+		return value:IsA("Player") and value or nil
+	end
+	local name = tostring(value)
+	if name == "" then
+		return nil
+	end
+	local found = Players:FindFirstChild(name)
+	if found and found:IsA("Player") then
+		return found
+	end
+	return nil
+end
+
+local Tracked = {}
+local TrackedCount = 0
+local TrackedByPlayer = {}
+local TrackedMaid = Maid.new()
+MainMaid:GiveTask(TrackedMaid)
+
+local TrackedReleaseCallbacks = {}
+
+local function releaseEntryVisuals(entry, full)
+	for i = 1, #TrackedReleaseCallbacks do
+		safeCall(TrackedReleaseCallbacks[i], entry, full)
+	end
+end
+
+local function bindTrackedCharacter(entry, char)
+	releaseEntryVisuals(entry)
+	entry.character = char
+	entry.head = nil
+	entry.hrp = nil
+	entry.humanoid = nil
+	entry.alive = false
+	entry.onScreen = false
+
+	if not char then
+		return
+	end
+
+	task.spawn(function()
+		local head = char:FindFirstChild("Head") or char:WaitForChild("Head", 10)
+		local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 10)
+		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 10)
+		if entry.character == char then
+			entry.head = head
+			entry.hrp = hrp
+			entry.humanoid = hum
+		end
+	end)
+end
+
+local function addTracked(plr)
+	if plr == player or TrackedByPlayer[plr] then
+		return
+	end
+
+	local entry = {
+		player = plr,
+		name = plr.Name,
+		character = nil,
+		head = nil,
+		hrp = nil,
+		humanoid = nil,
+		alive = false,
+		onScreen = false,
+		screenX = 0,
+		screenY = 0,
+		dist = 0,
+		distSq = 0,
+	}
+
+	TrackedCount += 1
+	Tracked[TrackedCount] = entry
+	TrackedByPlayer[plr] = entry
+
+	local id = tostring(plr.UserId)
+	TrackedMaid:Give("CA_" .. id, plr.CharacterAdded:Connect(function(c)
+		bindTrackedCharacter(entry, c)
+	end))
+	TrackedMaid:Give("CR_" .. id, plr.CharacterRemoving:Connect(function()
+		bindTrackedCharacter(entry, nil)
+	end))
+
+	if plr.Character then
+		bindTrackedCharacter(entry, plr.Character)
+	end
+end
+
+local function removeTracked(plr)
+	local entry = TrackedByPlayer[plr]
+	if not entry then
+		return
+	end
+
+	releaseEntryVisuals(entry, true)
+	TrackedByPlayer[plr] = nil
+
+	for i = 1, TrackedCount do
+		if Tracked[i] == entry then
+			Tracked[i] = Tracked[TrackedCount]
+			Tracked[TrackedCount] = nil
+			TrackedCount -= 1
+			break
 		end
 	end
-	return list
+
+	local id = tostring(plr.UserId)
+	TrackedMaid:Remove("CA_" .. id)
+	TrackedMaid:Remove("CR_" .. id)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+	addTracked(p)
+end
+
+MainMaid:GiveTask(Players.PlayerAdded:Connect(addTracked))
+MainMaid:GiveTask(Players.PlayerRemoving:Connect(removeTracked))
+
+local projectionKeys = {}
+
+local function updateProjections()
+	local cam = camera
+	local origin = (rootpart and rootpart.Parent and rootpart.Position) or cam.CFrame.Position
+
+	for i = 1, TrackedCount do
+		local entry = Tracked[i]
+		local char = entry.character
+		local hrp = entry.hrp
+		local hum = entry.humanoid
+
+		if char and char.Parent and hrp and hrp.Parent and hum and hum.Health > 0 then
+			local head = entry.head
+			if not head or not head.Parent then
+				head = hrp
+			end
+			entry.aimPart = head
+
+			local headPos = head.Position
+			local screenPos, onScreen = cam:WorldToViewportPoint(headPos)
+			entry.screenX = screenPos.X
+			entry.screenY = screenPos.Y
+			entry.onScreen = onScreen
+
+			local dx = hrp.Position.X - origin.X
+			local dy = hrp.Position.Y - origin.Y
+			local dz = hrp.Position.Z - origin.Z
+			local distSq = dx * dx + dy * dy + dz * dz
+			entry.distSq = distSq
+			entry.dist = math.sqrt(distSq)
+			entry.alive = true
+		else
+			entry.alive = false
+			entry.onScreen = false
+			entry.aimPart = nil
+		end
+	end
+end
+
+local function setProjectionUser(key, enabled)
+	if enabled then
+		projectionKeys[key] = true
+	else
+		projectionKeys[key] = nil
+	end
+
+	if next(projectionKeys) then
+		if not Scheduler.IsBound("RenderStepped", "Projection") then
+			Scheduler.Bind("RenderStepped", "Projection", updateProjections, 30)
+		end
+	else
+		Scheduler.Unbind("RenderStepped", "Projection")
+	end
 end
 
 local PlayerModule, Controls, ControlModule
@@ -732,7 +953,7 @@ local function createVFlyButtons(maid)
 		btn.AutoButtonColor = false
 		btn.BackgroundColor3 = BTN_IDLE
 		btn.TextColor3 = WHITE
-		btn.Font = Enum.Font.GothamBold
+		applyFont(btn, BUTTON_FONT)
 		btn.TextSize = 18
 		btn.Parent = frame
 
@@ -1146,117 +1367,77 @@ end
 
 LeftMain:AddDivider()
 
-local CounterFlingMaid = nil
+local counterParts = {}
+local counterChars = {}
+local counterAccum = 0
+local counterScan = 0
 
-LeftMain:AddToggle("CounterFling", {Text="Counter Fling", Default=false, Callback=function(v)
-	if CounterFlingMaid then
-		CounterFlingMaid:DoCleaning()
-		CounterFlingMaid = nil
-	end
-	Scheduler.Unbind("Heartbeat", "CounterFling")
-
-	local tracked = {}
-
-	local function untrack(char)
-		local entry = tracked[char]
-		if not entry then
-			return
-		end
-		tracked[char] = nil
-		for part, original in pairs(entry.parts) do
-			if part.Parent and original then
-				part.CanCollide = true
-			end
-		end
-		if entry.added then
-			entry.added:Disconnect()
-		end
-	end
-
-	if not v then
-		return
-	end
-
-	CounterFlingMaid = Maid.new()
-	local maid = CounterFlingMaid
-
-	local function track(char)
-		if not char or tracked[char] then
-			return
-		end
-		local entry = { parts = {}, added = nil }
-		tracked[char] = entry
-		for _, part in ipairs(char:GetDescendants()) do
-			if part:IsA("BasePart") then
-				entry.parts[part] = part.CanCollide
-			end
-		end
-		entry.added = char.DescendantAdded:Connect(function(obj)
-			if obj:IsA("BasePart") and tracked[char] then
-				entry.parts[obj] = obj.CanCollide
-			end
-		end)
-		maid:GiveTask(entry.added)
-	end
-
-	local function syncPlayer(p)
-		if p == player then
-			return
-		end
-		local char = p.Character
-		if char then
-			track(char)
-		end
-	end
-
-	for _, p in ipairs(Players:GetPlayers()) do
-		syncPlayer(p)
-		maid:GiveTask(p.CharacterAdded:Connect(function(c)
-			track(c)
-		end))
-		maid:GiveTask(p.CharacterRemoving:Connect(untrack))
-	end
-
-	maid:GiveTask(Players.PlayerAdded:Connect(function(p)
-		syncPlayer(p)
-		maid:GiveTask(p.CharacterAdded:Connect(track))
-		maid:GiveTask(p.CharacterRemoving:Connect(untrack))
-	end))
-
-	maid:GiveTask(Players.PlayerRemoving:Connect(function(p)
-		if p.Character then
-			untrack(p.Character)
-		end
-	end))
-
-	maid:GiveTask(function()
-		for char in pairs(tracked) do
-			untrack(char)
-		end
-	end)
-
-	local accum = 0
-	Scheduler.Bind("Heartbeat", "CounterFling", function(dt)
-		accum += dt
-		if accum < 0.1 then
-			return
-		end
-		accum = 0
-		for char, entry in pairs(tracked) do
-			if not char.Parent then
-				untrack(char)
-			else
-				for part in pairs(entry.parts) do
-					if not part.Parent then
-						entry.parts[part] = nil
-					elseif part.CanCollide then
-						part.CanCollide = false
-					end
+local function counterFlingScan(force)
+	for i = 1, TrackedCount do
+		local char = Tracked[i].character
+		if char and char.Parent and (force or not counterChars[char]) then
+			counterChars[char] = true
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") and counterParts[part] == nil then
+					counterParts[part] = part.CanCollide
 				end
 			end
 		end
-	end, 30)
+	end
+end
+
+local function counterFlingRestore()
+	for part, original in pairs(counterParts) do
+		if part.Parent and original then
+			part.CanCollide = true
+		end
+		counterParts[part] = nil
+	end
+	tclear(counterChars)
+end
+
+local function counterFlingStep(dt)
+	counterAccum += dt
+	if counterAccum < 0.1 then
+		return
+	end
+	counterAccum = 0
+
+	counterScan += 0.1
+	local force = false
+	if counterScan >= 2 then
+		counterScan = 0
+		force = true
+		for char in pairs(counterChars) do
+			if not char.Parent then
+				counterChars[char] = nil
+			end
+		end
+	end
+	counterFlingScan(force)
+
+	for part in pairs(counterParts) do
+		if not part.Parent then
+			counterParts[part] = nil
+		elseif part.CanCollide then
+			part.CanCollide = false
+		end
+	end
+end
+
+LeftMain:AddToggle("CounterFling", {Text="Counter Fling", Default=false, Callback=function(v)
+	if v then
+		counterAccum = 0
+		counterScan = 0
+		counterFlingScan(true)
+		Scheduler.Bind("Heartbeat", "CounterFling", counterFlingStep, 30)
+	else
+		Scheduler.Unbind("Heartbeat", "CounterFling")
+		counterFlingRestore()
+	end
 end})
+
+MainMaid:GiveTask(counterFlingRestore)
 
 LeftMain:AddToggle("CounterVoid", {Text="Counter Void", Default=false, Callback=function(v)
 	if not v then
@@ -1449,7 +1630,7 @@ local tracersColor = Color3_new(1, 1, 1)
 local outlineFillTransparency = 1
 local outlineTransparency = 0
 local espSize = 16
-local espFont = Enum.Font.BuilderSans
+local espFont = DEFAULT_FONT
 local showDistance = true
 local showPlayerName = true
 local rainbowSpeed = 5
@@ -1457,28 +1638,47 @@ local tracerOrigin = "Down"
 
 local MAX_HIGHLIGHTS = 31
 
-local espData = {}
 local espMaid = Maid.new()
 MainMaid:GiveTask(espMaid)
 
+local mousePos = Vector2_zero
+local mouseTracked = false
+
+local function setMouseTracking(enabled)
+	if enabled == mouseTracked then
+		return
+	end
+	mouseTracked = enabled
+	if enabled then
+		espMaid:Give("MouseTrack", UserInputService.InputChanged:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseMovement then
+				local pos = i.Position
+				mousePos = Vector2_new(pos.X, pos.Y)
+			end
+		end))
+	else
+		espMaid:Remove("MouseTrack")
+	end
+end
+
+local espFolder = nil
+
+local function getEspFolder()
+	if espFolder and espFolder.Parent then
+		return espFolder
+	end
+	espFolder = Instance_new("Folder")
+	espFolder.Name = "UNX_ESP"
+	if not pcall(function()
+		espFolder.Parent = CoreGui
+	end) then
+		espFolder.Parent = player:WaitForChild("PlayerGui")
+	end
+	return espFolder
+end
+
 local highlightPool = {}
 local highlightPoolSize = 0
-local highlightFolder = nil
-
-local function getHighlightFolder()
-	if highlightFolder and highlightFolder.Parent then
-		return highlightFolder
-	end
-	highlightFolder = Instance_new("Folder")
-	highlightFolder.Name = "UNX_Highlights"
-	local ok = pcall(function()
-		highlightFolder.Parent = CoreGui
-	end)
-	if not ok then
-		highlightFolder.Parent = Workspace
-	end
-	return highlightFolder
-end
 
 local function releaseHighlights()
 	for i = 1, highlightPoolSize do
@@ -1489,10 +1689,6 @@ local function releaseHighlights()
 		highlightPool[i] = nil
 	end
 	highlightPoolSize = 0
-	if highlightFolder then
-		highlightFolder:Destroy()
-		highlightFolder = nil
-	end
 end
 
 local function acquireHighlight(index)
@@ -1501,24 +1697,15 @@ local function acquireHighlight(index)
 		return hl
 	end
 	hl = Instance_new("Highlight")
-	hl.Name = "UNX_HL_" .. index
+	hl.Name = "HL_" .. index
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Enabled = false
-	hl.Parent = getHighlightFolder()
+	hl.Parent = getEspFolder()
 	highlightPool[index] = hl
 	if index > highlightPoolSize then
 		highlightPoolSize = index
 	end
 	return hl
-end
-
-local function getEntry(plr)
-	local entry = espData[plr]
-	if not entry then
-		entry = { player = plr }
-		espData[plr] = entry
-	end
-	return entry
 end
 
 local function destroyBillboard(entry)
@@ -1528,8 +1715,11 @@ local function destroyBillboard(entry)
 		entry.label = nil
 		entry.stroke = nil
 		entry.lastText = nil
+		entry.lastDist = nil
 		entry.lastSize = nil
 		entry.lastFont = nil
+		entry.lastColor = nil
+		entry.lastStrokeColor = nil
 	end
 end
 
@@ -1542,34 +1732,40 @@ local function destroyTracer(entry)
 	end
 end
 
-local function ensureBillboard(entry, head)
-	local billboard = entry.billboard
-	if billboard and billboard.Parent == head then
-		return billboard
-	end
+TrackedReleaseCallbacks[#TrackedReleaseCallbacks + 1] = function(entry, full)
 	destroyBillboard(entry)
+	if full then
+		destroyTracer(entry)
+	elseif entry.tracer and entry.tracer.Visible then
+		entry.tracer.Visible = false
+	end
+end
 
-	local existing = head:FindFirstChild("unxcontainer")
-	if existing then
-		existing:Destroy()
+local function ensureBillboard(entry, adornee)
+	local billboard = entry.billboard
+	if billboard then
+		if billboard.Adornee ~= adornee then
+			billboard.Adornee = adornee
+		end
+		return billboard
 	end
 
 	billboard = Instance_new("BillboardGui")
-	billboard.Name = "unxcontainer"
-	billboard.Adornee = head
+	billboard.Name = "Tag"
+	billboard.Adornee = adornee
 	billboard.Size = UDim2_new(0, 200, 0, 50)
 	billboard.StudsOffset = Vector3_new(0, 2, 0)
 	billboard.AlwaysOnTop = true
 	billboard.ResetOnSpawn = false
 	billboard.Enabled = false
-	billboard.Parent = head
+	billboard.Parent = getEspFolder()
 
 	local label = Instance_new("TextLabel")
 	label.BackgroundTransparency = 1
 	label.Size = UDim2_new(1, 0, 1, 0)
 	label.TextColor3 = espColor
 	label.TextSize = espSize
-	label.Font = espFont
+	applyFont(label, espFont)
 	label.Text = ""
 	label.Parent = billboard
 
@@ -1583,8 +1779,11 @@ local function ensureBillboard(entry, head)
 	entry.label = label
 	entry.stroke = stroke
 	entry.lastText = nil
+	entry.lastDist = nil
 	entry.lastSize = nil
 	entry.lastFont = nil
+	entry.lastColor = nil
+	entry.lastStrokeColor = nil
 	return billboard
 end
 
@@ -1608,100 +1807,15 @@ local function ensureTracer(entry)
 	return line
 end
 
-local function clearEntry(plr)
-	local entry = espData[plr]
-	if not entry then
-		return
-	end
-	destroyBillboard(entry)
-	destroyTracer(entry)
-	entry.character = nil
-	entry.head = nil
-	entry.hrp = nil
-	entry.humanoid = nil
-end
-
-local function bindOtherCharacter(plr, char)
-	local entry = getEntry(plr)
-	destroyBillboard(entry)
-	entry.character = char
-	entry.head = nil
-	entry.hrp = nil
-	entry.humanoid = nil
-	if not char then
-		return
-	end
-	task.spawn(function()
-		local head = char:FindFirstChild("Head") or char:WaitForChild("Head", 10)
-		local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 10)
-		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 10)
-		if espData[plr] and espData[plr].character == char then
-			entry.head = head
-			entry.hrp = hrp
-			entry.humanoid = hum
-		end
-	end)
-end
-
-local function addPlayer(plr)
-	if plr == player or espData[plr] then
-		return
-	end
-	getEntry(plr)
-	local id = tostring(plr.UserId)
-	espMaid:Give("CA_" .. id, plr.CharacterAdded:Connect(function(c)
-		bindOtherCharacter(plr, c)
-	end))
-	espMaid:Give("CR_" .. id, plr.CharacterRemoving:Connect(function()
-		clearEntry(plr)
-	end))
-	if plr.Character then
-		bindOtherCharacter(plr, plr.Character)
-	end
-end
-
-for _, p in ipairs(Players:GetPlayers()) do
-	addPlayer(p)
-end
-
-MainMaid:GiveTask(Players.PlayerAdded:Connect(addPlayer))
-MainMaid:GiveTask(Players.PlayerRemoving:Connect(function(plr)
-	clearEntry(plr)
-	espData[plr] = nil
-	local id = tostring(plr.UserId)
-	espMaid:Remove("CA_" .. id)
-	espMaid:Remove("CR_" .. id)
-end))
-
-local mousePos = Vector2_zero
-local mouseTracked = false
-
-local function setMouseTracking(enabled)
-	if enabled == mouseTracked then
-		return
-	end
-	mouseTracked = enabled
-	if enabled then
-		espMaid:Give("MouseTrack", UserInputService.InputChanged:Connect(function(i)
-			if i.UserInputType == Enum.UserInputType.MouseMovement then
-				local p = i.Position
-				mousePos = Vector2_new(p.X, p.Y)
-			end
-		end))
-	else
-		espMaid:Remove("MouseTrack")
-	end
-end
-
 ESPTab:AddToggle("ESP", {Text="ESP", Default=false}):AddColorPicker("ESPColor", {Default=Color3_new(1,1,1), Title="ESP Color", Callback=function(v) espColor = v end})
 ESPTab:AddToggle("Outline", {Text="Outline", Default=false}):AddColorPicker("OutlineColor", {Default=Color3_new(1,1,1), Title="Outline Color", Callback=function(v) outlineColor = v end})
 ESPTab:AddToggle("Tracers", {Text="Tracers", Default=false}):AddColorPicker("TracersColor", {Default=Color3_new(1,1,1), Title="Tracers Color", Callback=function(v) tracersColor = v end})
 
 ESPTab:AddDivider()
 
-ESPTab:AddDropdown("ESPTeamOnly", { Values = getTeamList(), Multi = true, Text = "ESP Team Only", Searchable = true })
-ESPTab:AddDropdown("OutlineTeamOnly", { Values = getTeamList(), Multi = true, Text = "Outline Team Only", Searchable = true })
-ESPTab:AddDropdown("TracersTeamOnly", { Values = getTeamList(), Multi = true, Text = "Tracers Team Only", Searchable = true })
+ESPTab:AddDropdown("ESPTeamOnly", { SpecialType = "Team", Multi = true, Text = "ESP Team Only", Searchable = true })
+ESPTab:AddDropdown("OutlineTeamOnly", { SpecialType = "Team", Multi = true, Text = "Outline Team Only", Searchable = true })
+ESPTab:AddDropdown("TracersTeamOnly", { SpecialType = "Team", Multi = true, Text = "Tracers Team Only", Searchable = true })
 
 ESPTab:AddDivider()
 
@@ -1730,20 +1844,19 @@ local function makeFilter(teamKey, playerKey)
 		Options[playerKey]:OnChanged(state.Refresh)
 	end)
 
-	Refreshers[#Refreshers + 1] = state.Refresh
 	return state
 end
 
-local function passesFilter(state, plr)
+local function passesFilter(state, entry)
 	if not state.teamHas and not state.playerHas then
 		return true
 	end
-	if state.playerHas and state.playerSet and state.playerSet[plr.Name] then
+	if state.playerHas and inSet(state.playerSet, entry.player, entry.name) then
 		return true
 	end
-	if state.teamHas and state.teamSet then
-		local team = plr.Team
-		if team and state.teamSet[team.Name] then
+	if state.teamHas then
+		local team = entry.player.Team
+		if team and inSet(state.teamSet, team, team.Name) then
 			return true
 		end
 	end
@@ -1794,18 +1907,14 @@ local function espRender()
 		end
 	end
 
-	local originPos = (rootpart and rootpart.Parent and rootpart.Position) or camera.CFrame.Position
-	local currentCamera = camera
 	local candidateCount = 0
 
-	for plr, entry in pairs(espData) do
-		local char = entry.character
-		local hrp = entry.hrp
-		local hum = entry.humanoid
+	for i = 1, TrackedCount do
+		local entry = Tracked[i]
 
-		if not char or not char.Parent or not hrp or not hrp.Parent or not hum or hum.Health <= 0 then
-			if entry.billboard then
-				destroyBillboard(entry)
+		if not entry.alive then
+			if entry.billboard and entry.billboard.Enabled then
+				entry.billboard.Enabled = false
 			end
 			if entry.tracer and entry.tracer.Visible then
 				entry.tracer.Visible = false
@@ -1813,29 +1922,13 @@ local function espRender()
 			continue
 		end
 
-		local head = entry.head
-		if not head or not head.Parent then
-			head = hrp
-		end
+		local onScreen = entry.onScreen
+		local wantESP = espOn and onScreen and passesFilter(ESPFilter, entry)
+		local wantOutline = outlineOn and onScreen and passesFilter(OutlineFilter, entry)
+		local wantTracer = tracersOn and onScreen and passesFilter(TracersFilter, entry)
 
-		local wantESP = espOn and passesFilter(ESPFilter, plr)
-		local wantOutline = outlineOn and passesFilter(OutlineFilter, plr)
-		local wantTracer = tracersOn and passesFilter(TracersFilter, plr)
-
-		if not (wantESP or wantOutline or wantTracer) then
-			if entry.billboard then
-				destroyBillboard(entry)
-			end
-			if entry.tracer and entry.tracer.Visible then
-				entry.tracer.Visible = false
-			end
-			continue
-		end
-
-		local pos3d, onScreen = currentCamera:WorldToViewportPoint(head.Position + Vector3_new(0, 2, 0))
-
-		if wantESP and onScreen then
-			local billboard = ensureBillboard(entry, head)
+		if wantESP then
+			local billboard = ensureBillboard(entry, entry.aimPart)
 			local label = entry.label
 			if billboard and label then
 				if not billboard.Enabled then
@@ -1843,80 +1936,102 @@ local function espRender()
 				end
 
 				local c = espColor
-				if teamESP and plr.Team then
-					c = plr.TeamColor.Color
+				if teamESP then
+					local team = entry.player.Team
+					if team then
+						c = team.TeamColor.Color
+					end
 				end
 				if rainbowESP then
 					c = rainbowColor
 				end
-				if label.TextColor3 ~= c then
+				if entry.lastColor ~= c then
+					entry.lastColor = c
 					label.TextColor3 = c
 				end
+
 				if entry.lastSize ~= espSize then
 					entry.lastSize = espSize
 					label.TextSize = espSize
 				end
 				if entry.lastFont ~= espFont then
 					entry.lastFont = espFont
-					label.Font = espFont
+					applyFont(label, espFont)
 				end
 
 				local stroke = entry.stroke
 				if stroke then
 					local sc = rainbowESP and rainbowStroke or BLACK
-					if stroke.Color ~= sc then
+					if entry.lastStrokeColor ~= sc then
+						entry.lastStrokeColor = sc
 						stroke.Color = sc
 					end
 				end
 
-				local textStr
-				if showPlayerName then
-					if showDistance then
-						textStr = plr.Name .. " " .. sformat("[%d]", floor((originPos - hrp.Position).Magnitude))
+				local distInt = showDistance and floor(entry.dist) or -1
+				if entry.lastDist ~= distInt or entry.lastText == nil then
+					entry.lastDist = distInt
+					local textStr
+					if showPlayerName then
+						if showDistance then
+							textStr = entry.name .. " " .. sformat("[%d]", distInt)
+						else
+							textStr = entry.name
+						end
+					elseif showDistance then
+						textStr = sformat("[%d]", distInt)
 					else
-						textStr = plr.Name
+						textStr = ""
 					end
-				elseif showDistance then
-					textStr = sformat("[%d]", floor((originPos - hrp.Position).Magnitude))
-				else
-					textStr = ""
-				end
-
-				if entry.lastText ~= textStr then
-					entry.lastText = textStr
-					label.Text = textStr
+					if entry.lastText ~= textStr then
+						entry.lastText = textStr
+						label.Text = textStr
+					end
 				end
 			end
 		elseif entry.billboard and entry.billboard.Enabled then
 			entry.billboard.Enabled = false
 		end
 
-		if wantOutline and onScreen then
+		if wantOutline then
 			candidateCount += 1
 			local candidate = candidatePool[candidateCount]
 			if not candidate then
 				candidate = {}
 				candidatePool[candidateCount] = candidate
 			end
-			candidate.char = char
-			candidate.dist = (originPos - hrp.Position).Magnitude
-			candidate.color = (rainbowOutline and rainbowColor) or (teamOutline and plr.Team and plr.TeamColor.Color) or outlineColor
+			candidate.char = entry.character
+			candidate.dist = entry.dist
+			local oc = outlineColor
+			if teamOutline then
+				local team = entry.player.Team
+				if team then
+					oc = team.TeamColor.Color
+				end
+			end
+			if rainbowOutline then
+				oc = rainbowColor
+			end
+			candidate.color = oc
 			candidateList[candidateCount] = candidate
 		end
 
-		if wantTracer and onScreen then
+		if wantTracer then
 			local tracer = ensureTracer(entry)
 			if tracer then
 				local c = tracersColor
-				if teamTracers and plr.Team then
-					c = plr.TeamColor.Color
+				if teamTracers then
+					local team = entry.player.Team
+					if team then
+						c = team.TeamColor.Color
+					end
 				end
 				if rainbowTracers then
 					c = rainbowColor
 				end
 				tracer.Color = c
 				tracer.From = tracerFrom
-				tracer.To = Vector2_new(pos3d.X, pos3d.Y)
+				tracer.To = Vector2_new(entry.screenX, entry.screenY)
 				if not tracer.Visible then
 					tracer.Visible = true
 				end
@@ -1974,6 +2089,7 @@ local function updateESPLoop()
 	local anyOn = espOn or outlineOn or tracersOn
 
 	setMouseTracking(tracersOn and tracerOrigin == "Mouse" and IsMouse)
+	setProjectionUser("ESP", anyOn)
 
 	if anyOn then
 		if not Scheduler.IsBound("RenderStepped", "ESP") then
@@ -1981,25 +2097,24 @@ local function updateESPLoop()
 		end
 	else
 		Scheduler.Unbind("RenderStepped", "ESP")
-		for _, entry in pairs(espData) do
-			destroyBillboard(entry)
-			destroyTracer(entry)
-		end
-		releaseHighlights()
 	end
 
+	if not espOn then
+		for i = 1, TrackedCount do
+			destroyBillboard(Tracked[i])
+		end
+	end
+	if not tracersOn then
+		for i = 1, TrackedCount do
+			destroyTracer(Tracked[i])
+		end
+	end
 	if not outlineOn then
 		releaseHighlights()
 	end
-	if not tracersOn then
-		for _, entry in pairs(espData) do
-			destroyTracer(entry)
-		end
-	end
-	if not espOn then
-		for _, entry in pairs(espData) do
-			destroyBillboard(entry)
-		end
+	if not anyOn and espFolder then
+		espFolder:Destroy()
+		espFolder = nil
 	end
 end
 
@@ -2010,6 +2125,17 @@ pcall(function() Toggles.Outline:OnChanged(updateESPLoop) end)
 pcall(function() Toggles.Tracers:OnChanged(updateESPLoop) end)
 
 espMaid:GiveTask(releaseHighlights)
+espMaid:GiveTask(function()
+	for i = 1, TrackedCount do
+		local entry = Tracked[i]
+		destroyBillboard(entry)
+		destroyTracer(entry)
+	end
+	if espFolder then
+		espFolder:Destroy()
+		espFolder = nil
+	end
+end)
 
 ESPConfigTab:AddToggle("RainbowESP", {Text="Rainbow ESP", Default=false})
 ESPConfigTab:AddToggle("RainbowOutline", {Text="Rainbow Outline", Default=false})
@@ -2018,14 +2144,24 @@ ESPConfigTab:AddSlider("RainbowSpeed", {Text="Rainbow Speed", Min=0, Max=10, Def
 ESPConfigTab:AddSlider("ESPSize", {Text="ESP Size", Min=10, Max=30, Default=16, Rounding=0, Callback=function(v) espSize = v end})
 ESPConfigTab:AddDropdown("ESPFont", {
 	Text="ESP Font",
-	Values={"BuilderSans","SourceSans","SourceSansBold","Roboto","Arcade","Gotham","GothamBold","Oswald","Code","SciFi","Bodoni","AmaticSC"},
-	Default=1,
-	Callback=function(v)
-		espFont = Enum.Font[v] or Enum.Font.BuilderSans
+	Values = FONT_NAMES,
+	Default = 1,
+	Callback = function(v)
+		espFont = FONT_VALUES[v] or DEFAULT_FONT
 	end
 })
-ESPConfigTab:AddToggle("ShowDistance", {Text="Show Distance", Default=true, Callback=function(v) showDistance = v end})
-ESPConfigTab:AddToggle("ShowPlayerName", {Text="Show Player Name", Default=true, Callback=function(v) showPlayerName = v end})
+ESPConfigTab:AddToggle("ShowDistance", {Text="Show Distance", Default=true, Callback=function(v)
+	showDistance = v
+	for i = 1, TrackedCount do
+		Tracked[i].lastDist = nil
+	end
+end})
+ESPConfigTab:AddToggle("ShowPlayerName", {Text="Show Player Name", Default=true, Callback=function(v)
+	showPlayerName = v
+	for i = 1, TrackedCount do
+		Tracked[i].lastDist = nil
+	end
+end})
 ESPConfigTab:AddSlider("OutlineFillTransparency", {Text="Outline Fill Transparency (%)", Min=0, Max=100, Default=100, Suffix="%", Rounding=0, Callback=function(v) outlineFillTransparency = v / 100 end})
 ESPConfigTab:AddSlider("OutlineTransparency", {Text="Outline Transparency (%)", Min=0, Max=100, Default=0, Suffix="%", Rounding=0, Callback=function(v) outlineTransparency = v / 100 end})
 ESPConfigTab:AddDropdown("TracersPosition", {Text="Tracers Position", Values={"Mouse","Upper","Middle","Down"}, Default="Down", Callback=function(v)
@@ -2206,8 +2342,8 @@ AimlockConfigTab:AddDropdown("PrioritizePlayers", {
 
 AimlockConfigTab:AddDivider()
 
-AimlockConfigTab:AddDropdown("IgnoreTeam", { Values = getTeamList(), Multi = true, Text = "Ignore Team" })
-AimlockConfigTab:AddDropdown("PrioritizeTeam", { Values = getTeamList(), Multi = true, Text = "Prioritize Team" })
+AimlockConfigTab:AddDropdown("IgnoreTeam", { SpecialType = "Team", Multi = true, Text = "Ignore Team" })
+AimlockConfigTab:AddDropdown("PrioritizeTeam", { SpecialType = "Team", Multi = true, Text = "Prioritize Team" })
 
 AimlockConfigTab:AddDivider()
 AimlockConfigTab:AddDropdown("ExcludeFromTeamExclusion", {
@@ -2307,9 +2443,9 @@ local function rebuildOrbitTargets()
 	if type(selected) ~= "table" then
 		return
 	end
-	for name, isSelected in pairs(selected) do
+	for value, isSelected in pairs(selected) do
 		if isSelected then
-			local p = Players:FindFirstChild(name)
+			local p = resolvePlayerValue(value)
 			if p and p ~= player then
 				orbitTargetCount += 1
 				orbitTargets[orbitTargetCount] = p
@@ -2457,7 +2593,7 @@ local function createFreecamTouchPad(maid)
 		btn.BackgroundColor3 = BTN_IDLE
 		btn.BackgroundTransparency = 0.25
 		btn.TextColor3 = WHITE
-		btn.Font = Enum.Font.GothamBold
+		applyFont(btn, BUTTON_FONT)
 		btn.TextSize = 22
 		btn.Parent = holder
 
@@ -2719,7 +2855,8 @@ local flingRestorePos = nil
 
 FlingGroupBox:AddDropdown("FlingPlayer", {
 	Text = "Select Players",
-	Values = getPlayerList(),
+	SpecialType = "Player",
+	ExcludeLocalPlayer = true,
 	Multi = true,
 	Searchable = true,
 })
@@ -2932,9 +3069,9 @@ FlingGroupBox:AddButton({Text="Fling Selected", Func=function()
 		return
 	end
 	local list = {}
-	for name, isSelected in pairs(selected) do
+	for value, isSelected in pairs(selected) do
 		if isSelected then
-			local targetPlayer = Players:FindFirstChild(tostring(name))
+			local targetPlayer = resolvePlayerValue(value)
 			if targetPlayer and targetPlayer ~= player then
 				list[#list + 1] = targetPlayer
 			end
@@ -2978,9 +3115,11 @@ local teleportBusy = false
 
 TeleportGroupBox:AddDropdown("TeleportPlayer", {
 	Text = "Select Player",
-	Values = getPlayerList(),
+	SpecialType = "Player",
+	ExcludeLocalPlayer = true,
+	Searchable = true,
 	Callback = function(v)
-		teleportPlayer = v and Players:FindFirstChild(tostring(v)) or nil
+		teleportPlayer = resolvePlayerValue(v)
 	end
 })
 
@@ -3109,10 +3248,11 @@ SpectateGroupBox:AddToggle("SpectatePlayer", {Text="Spectate Player", Default=fa
 
 SpectateGroupBox:AddDropdown("PlayerToSpectate", {
 	Text = "Player To Spectate",
-	Values = getPlayerList(),
+	SpecialType = "Player",
+	ExcludeLocalPlayer = true,
 	Searchable = true,
 	Callback = function(v)
-		spectatePlayer = v and Players:FindFirstChild(tostring(v)) or nil
+		spectatePlayer = resolvePlayerValue(v)
 		if toggleValue("SpectatePlayer") then
 			updateSpectate()
 		end
@@ -3470,6 +3610,30 @@ local function updateFOVCircle()
 	end
 end
 
+local OptFOVSize = nil
+local OptFOVType = nil
+local OptAimlockType = nil
+local OptMouseMaxDist = nil
+local OptAimlockMaxDist = nil
+local OptCertainPlayer = nil
+local OptOffsetX = nil
+local OptOffsetY = nil
+local OptSmoothness = nil
+
+local function cacheAimOptions()
+	OptFOVSize = Options.FOVSize
+	OptFOVType = Options.FOVType
+	OptAimlockType = Options.AimlockType
+	OptMouseMaxDist = Options.MouseMaxDist
+	OptAimlockMaxDist = Options.AimlockMaxDist
+	OptCertainPlayer = Options.AimlockCertainPlayer
+	OptOffsetX = Options.AimlockOffsetX
+	OptOffsetY = Options.AimlockOffsetY
+	OptSmoothness = Options.AimbotSmoothness
+end
+
+cacheAimOptions()
+
 local aimWhitelistSet = nil
 local aimWhitelistHas = false
 local aimPrioritizePlayersSet = nil
@@ -3511,49 +3675,40 @@ end
 local ignoreForceField = false
 local teamCheck = true
 local wallCheck = true
+local localTeam = nil
 
-local function isValidTarget(plr)
-	if plr == player then
+local function isValidTarget(entry)
+	if not entry.alive then
 		return false
 	end
-	local char = plr.Character
-	if not char then
+
+	local plr = entry.player
+	local team = plr.Team
+
+	if teamCheck and team == localTeam then
 		return false
 	end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum or hum.Health <= 0 then
+	if aimWhitelistHas and inSet(aimWhitelistSet, plr, entry.name) then
 		return false
 	end
-	if not char:FindFirstChild("Head") then
+	if ignoreForceField and entry.character:FindFirstChildOfClass("ForceField") then
 		return false
 	end
-	if ignoreForceField and char:FindFirstChildOfClass("ForceField") then
-		return false
-	end
-	if teamCheck and plr.Team == player.Team then
-		return false
-	end
-	if aimWhitelistHas and aimWhitelistSet[plr.Name] then
-		return false
-	end
-	if aimIgnoreTeamHas then
-		local team = plr.Team
-		if team and aimIgnoreTeamSet[team.Name] then
-			if not (aimExcludeSet and aimExcludeSet[plr.Name]) then
-				return false
-			end
+	if aimIgnoreTeamHas and team and inSet(aimIgnoreTeamSet, team, team.Name) then
+		if not inSet(aimExcludeSet, plr, entry.name) then
+			return false
 		end
 	end
+
 	return true
 end
 
-local function hasLineOfSight(targetHead, originPos)
+local function hasLineOfSight(targetPart, originPos)
 	if not wallCheck then
 		return true
 	end
-	local direction = targetHead.Position - originPos
-	local magnitude = direction.Magnitude
-	if magnitude < 1e-3 then
+	local direction = targetPart.Position - originPos
+	if direction.Magnitude < 1e-3 then
 		return true
 	end
 	local result = Workspace:Raycast(originPos, direction, AimcastParams)
@@ -3561,78 +3716,74 @@ local function hasLineOfSight(targetHead, originPos)
 		return true
 	end
 	local hit = result.Instance
-	return hit ~= nil and hit:IsDescendantOf(targetHead.Parent)
+	return hit ~= nil and hit:IsDescendantOf(targetPart.Parent)
 end
 
-local function getClosestPlayer(mouseLocation, centerPos)
-	local certain = optionValue("AimlockCertainPlayer", nil)
+local function getClosestTarget(mouseX, mouseY, centerX, centerY)
 	local originPos = camera.CFrame.Position
-	local nearestMouse = optionValue("AimlockType", "Nearest Character") == "Nearest Mouse"
-	local maxDist = nearestMouse and optionValue("MouseMaxDist", 5000) or optionValue("AimlockMaxDist", 5000)
+	local nearestMouse = (OptAimlockType and OptAimlockType.Value or "Nearest Character") == "Nearest Mouse"
+	local maxDist = nearestMouse and (OptMouseMaxDist and OptMouseMaxDist.Value or 5000) or (OptAimlockMaxDist and OptAimlockMaxDist.Value or 5000)
 	local maxDistSq = maxDist * maxDist
 
-	if certain and certain ~= "" then
-		local certainPlayer = Players:FindFirstChild(tostring(certain))
-		if certainPlayer and isValidTarget(certainPlayer) then
-			local head = certainPlayer.Character:FindFirstChild("Head")
-			if head and (head.Position - originPos).Magnitude <= maxDist and hasLineOfSight(head, originPos) then
-				return certainPlayer, head
-			end
+	local certain = OptCertainPlayer and OptCertainPlayer.Value or nil
+	if certain ~= nil and certain ~= "" then
+		local certainPlayer = resolvePlayerValue(certain)
+		local entry = certainPlayer and TrackedByPlayer[certainPlayer] or nil
+		if entry and isValidTarget(entry) and entry.distSq <= maxDistSq and hasLineOfSight(entry.aimPart, originPos) then
+			return entry
 		end
-		return nil, nil
+		return nil
 	end
 
-	local checkPos = nearestMouse and mouseLocation or centerPos
+	local checkX = nearestMouse and mouseX or centerX
+	local checkY = nearestMouse and mouseY or centerY
+
 	local fovEnabled = toggleValue("EnableFOV")
-	local fovCenter = fovEnabled and ((optionValue("FOVType", "Centered") == "Centered") and centerPos or mouseLocation) or nil
-	local fovSize = fovEnabled and optionValue("FOVSize", 150) or 0
+	local fovSize = fovEnabled and (OptFOVSize and OptFOVSize.Value or 150) or 0
 	local fovSizeSq = fovSize * fovSize
+	local fovCenterX, fovCenterY = centerX, centerY
+	if fovEnabled and (OptFOVType and OptFOVType.Value or "Centered") ~= "Centered" then
+		fovCenterX, fovCenterY = mouseX, mouseY
+	end
 
-	local closest, closestHead = nil, nil
+	local best = nil
 	local shortest = huge
-	local currentCamera = camera
 
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if isValidTarget(plr) then
-			local head = plr.Character:FindFirstChild("Head")
-			if head then
-				local headPos = head.Position
-				local offset = headPos - originPos
-				if offset.X * offset.X + offset.Y * offset.Y + offset.Z * offset.Z <= maxDistSq then
-					local screenPos, onScreen = currentCamera:WorldToViewportPoint(headPos)
-					if onScreen then
-						local screen2d = Vector2_new(screenPos.X, screenPos.Y)
+	for i = 1, TrackedCount do
+		local entry = Tracked[i]
+		if entry.onScreen and entry.distSq <= maxDistSq and isValidTarget(entry) then
+			local sx, sy = entry.screenX, entry.screenY
 
-						local distMult = 1
-						if aimPrioritizePlayersHas and aimPrioritizePlayersSet[plr.Name] then
-							distMult = 0.5
-						elseif aimPrioritizeTeamHas then
-							local team = plr.Team
-							if team and aimPrioritizeTeamSet[team.Name] then
-								distMult = 0.5
-							end
-						end
+			local distMult = 1
+			if aimPrioritizePlayersHas and inSet(aimPrioritizePlayersSet, entry.player, entry.name) then
+				distMult = 0.5
+			elseif aimPrioritizeTeamHas then
+				local team = entry.player.Team
+				if team and inSet(aimPrioritizeTeamSet, team, team.Name) then
+					distMult = 0.5
+				end
+			end
 
-						local distance = (screen2d - checkPos).Magnitude * distMult
-						if distance < shortest then
-							local insideFov = true
-							if fovEnabled then
-								local d = screen2d - fovCenter
-								insideFov = (d.X * d.X + d.Y * d.Y) <= fovSizeSq
-							end
-							if insideFov and hasLineOfSight(head, originPos) then
-								shortest = distance
-								closest = plr
-								closestHead = head
-							end
-						end
-					end
+			local ddx = sx - checkX
+			local ddy = sy - checkY
+			local distance = math.sqrt(ddx * ddx + ddy * ddy) * distMult
+
+			if distance < shortest then
+				local insideFov = true
+				if fovEnabled then
+					local fx = sx - fovCenterX
+					local fy = sy - fovCenterY
+					insideFov = (fx * fx + fy * fy) <= fovSizeSq
+				end
+				if insideFov and hasLineOfSight(entry.aimPart, originPos) then
+					shortest = distance
+					best = entry
 				end
 			end
 		end
 	end
 
-	return closest, closestHead
+	return best
 end
 
 local function aimlockStep()
@@ -3645,29 +3796,41 @@ local function aimlockStep()
 	ignoreForceField = toggleValue("IgnoreForceFielded")
 	teamCheck = toggleValue("TeamCheck")
 	wallCheck = toggleValue("WallCheck")
+	localTeam = player.Team
 
 	local mouse = UserInputService:GetMouseLocation()
-	local mouseLocation = Vector2_new(mouse.X, mouse.Y + 36)
-	local centerPos = Vector2_new(viewportSize.X * 0.5, viewportSize.Y * 0.5)
+	local centerX = viewportSize.X * 0.5
+	local centerY = viewportSize.Y * 0.5
 
-	local target, head = getClosestPlayer(mouseLocation, centerPos)
-	if not target or not head or not head.Parent then
+	local entry = getClosestTarget(mouse.X, mouse.Y + 36, centerX, centerY)
+	if not entry then
 		return
 	end
 
-	local targetPos = head.Position + Vector3_new(optionValue("AimlockOffsetX", 0) * 10, optionValue("AimlockOffsetY", 0) * 10, 0)
+	local aimPart = entry.aimPart
+	if not aimPart or not aimPart.Parent then
+		return
+	end
+
+	local offsetX = (OptOffsetX and OptOffsetX.Value or 0) * 10
+	local offsetY = (OptOffsetY and OptOffsetY.Value or 0) * 10
+	local targetPos = aimPart.Position + Vector3_new(offsetX, offsetY, 0)
+
 	local camCF = camera.CFrame
 	local goal = CFrame_new(camCF.Position, targetPos)
 
 	if toggleValue("SmoothAimlock") then
-		camera.CFrame = camCF:Lerp(goal, clamp(optionValue("AimbotSmoothness", 25) / 100, 0.01, 1))
+		camera.CFrame = camCF:Lerp(goal, clamp((OptSmoothness and OptSmoothness.Value or 25) / 100, 0.01, 1))
 	else
 		camera.CFrame = goal
 	end
 end
 
 local function updateAimlockLoop()
-	if toggleValue("EnableAimlock") or toggleValue("ShowFOV") then
+	local aimOn = toggleValue("EnableAimlock")
+	setProjectionUser("Aimlock", aimOn)
+
+	if aimOn or toggleValue("ShowFOV") then
 		if not Scheduler.IsBound("RenderStepped", "Aimlock") then
 			Scheduler.Bind("RenderStepped", "Aimlock", aimlockStep, 70)
 		end
@@ -3680,7 +3843,7 @@ local function updateAimlockLoop()
 end
 
 Init[#Init + 1] = updateAimlockLoop
-Refreshers[#Refreshers + 1] = refreshAimSets
+Init[#Init + 1] = refreshAimSets
 
 pcall(function() Toggles.EnableAimlock:OnChanged(updateAimlockLoop) end)
 pcall(function() Toggles.ShowFOV:OnChanged(updateAimlockLoop) end)
@@ -3754,67 +3917,17 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
 
-local playerListOptions = {
-	"TeleportPlayer",
-	"PlayerToSpectate",
-	"FlingPlayer",
-	"ESPPlayersOnly",
-	"OutlinePlayersOnly",
-	"TracersPlayersOnly",
-	"OrbitPlayers",
-	"ExcludeFromTeamExclusion",
-}
-
-local teamListOptions = {
-	"ESPTeamOnly",
-	"OutlineTeamOnly",
-	"TracersTeamOnly",
-	"IgnoreTeam",
-	"PrioritizeTeam",
-}
-
-local refreshToken = 0
-
-local function doRefresh()
-	local players = getPlayerList()
-	local teams = getTeamList()
-
-	for i = 1, #playerListOptions do
-		local option = Options[playerListOptions[i]]
-		if option and option.SetValues then
-			pcall(option.SetValues, option, players)
-		end
-	end
-
-	for i = 1, #teamListOptions do
-		local option = Options[teamListOptions[i]]
-		if option and option.SetValues then
-			pcall(option.SetValues, option, teams)
-		end
-	end
-
+MainMaid:GiveTask(Players.PlayerAdded:Connect(function()
 	for i = 1, #Refreshers do
 		safeCall(Refreshers[i])
 	end
-end
-
-local function refreshPlayers()
-	refreshToken += 1
-	local token = refreshToken
-	task.delay(0.75, function()
-		if token == refreshToken then
-			safeCall(doRefresh)
-		end
-	end)
-end
-
-MainMaid:GiveTask(Players.PlayerAdded:Connect(refreshPlayers))
-MainMaid:GiveTask(Players.PlayerRemoving:Connect(refreshPlayers))
-MainMaid:GiveTask(Teams.ChildAdded:Connect(refreshPlayers))
-MainMaid:GiveTask(Teams.ChildRemoved:Connect(refreshPlayers))
+end))
+MainMaid:GiveTask(Players.PlayerRemoving:Connect(function()
+	for i = 1, #Refreshers do
+		safeCall(Refreshers[i])
+	end
+end))
 
 for i = 1, #Init do
 	safeCall(Init[i])
 end
-
-refreshPlayers()
