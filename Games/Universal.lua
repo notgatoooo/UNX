@@ -3703,4 +3703,118 @@ MenuGroup:AddDivider()
 MenuGroup:AddButton("Unload", function()
 	Library:Unload()
 end)
-MenuGroup:AddLabel("<font color='rgb(255,0,0)'><u>DISCLAIMER</
+MenuGroup:AddLabel("<font color='rgb(255,0,0)'><u>DISCLAIMER</u></font>: We Use This To See How Many Users We Get, <u>We Do Not Share This Information With Any Third Partys</u>.", true)
+MenuGroup:AddCheckbox("OptOutLog", {
+	Text = "Opt-Out Log",
+	Default = isfile and isfile("optout.unx") or false,
+	Callback = function(Value)
+		pcall(function()
+			if Value then
+				writefile("optout.unx", "")
+			elseif isfile("optout.unx") then
+				delfile("optout.unx")
+			end
+		end)
+	end,
+})
+MenuGroup:AddDivider()
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {Default="U", NoUI=true, Text="Menu keybind"})
+Library.ToggleKeybind = Options.MenuKeybind
+
+local BindButtonGroup = Tabs["UI Settings"]:AddRightGroupbox("Bind Button")
+BindButtonGroup:AddSlider("BindButtonSize", {Text="Size Scale", Default=1, Min=0.5, Max=2, Rounding=1, Callback=function(v) BindButton:SetSizeB(v) end})
+BindButtonGroup:AddDropdown("BindButtonShape", {Values={"Round", "Square", "Slight Round"}, Default=1, Text="Shape", Callback=function(v)
+	if v == "Round" then
+		BindButton:MakeAllShape(0)
+	elseif v == "Square" then
+		BindButton:MakeAllShape(1)
+	elseif v == "Slight Round" then
+		BindButton:MakeAllShape(2)
+	end
+end})
+BindButtonGroup:AddButton("Reset Positions", function() BindButton:ResetPos() end)
+
+end
+
+Library:OnUnload(function()
+	Scheduler.Destroy()
+	MainMaid:Destroy()
+	pcall(function()
+		TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+	end)
+end)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({"MenuKeybind"})
+ThemeManager:SetFolder("unxhub")
+SaveManager:SetFolder("unxhub")
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+SaveManager:LoadAutoloadConfig()
+
+local playerListOptions = {
+	"TeleportPlayer",
+	"PlayerToSpectate",
+	"FlingPlayer",
+	"ESPPlayersOnly",
+	"OutlinePlayersOnly",
+	"TracersPlayersOnly",
+	"OrbitPlayers",
+	"ExcludeFromTeamExclusion",
+}
+
+local teamListOptions = {
+	"ESPTeamOnly",
+	"OutlineTeamOnly",
+	"TracersTeamOnly",
+	"IgnoreTeam",
+	"PrioritizeTeam",
+}
+
+local refreshToken = 0
+
+local function doRefresh()
+	local players = getPlayerList()
+	local teams = getTeamList()
+
+	for i = 1, #playerListOptions do
+		local option = Options[playerListOptions[i]]
+		if option and option.SetValues then
+			pcall(option.SetValues, option, players)
+		end
+	end
+
+	for i = 1, #teamListOptions do
+		local option = Options[teamListOptions[i]]
+		if option and option.SetValues then
+			pcall(option.SetValues, option, teams)
+		end
+	end
+
+	for i = 1, #Refreshers do
+		safeCall(Refreshers[i])
+	end
+end
+
+local function refreshPlayers()
+	refreshToken += 1
+	local token = refreshToken
+	task.delay(0.75, function()
+		if token == refreshToken then
+			safeCall(doRefresh)
+		end
+	end)
+end
+
+MainMaid:GiveTask(Players.PlayerAdded:Connect(refreshPlayers))
+MainMaid:GiveTask(Players.PlayerRemoving:Connect(refreshPlayers))
+MainMaid:GiveTask(Teams.ChildAdded:Connect(refreshPlayers))
+MainMaid:GiveTask(Teams.ChildRemoved:Connect(refreshPlayers))
+
+for i = 1, #Init do
+	safeCall(Init[i])
+end
+
+refreshPlayers()
