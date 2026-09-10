@@ -1,727 +1,684 @@
-local Library,Tabs,MainMaid=...
+local Library, Tabs, MainMaid = ...
 
-local players=game:GetService("Players")
-local runservice=game:GetService("RunService")
-local uis=game:GetService("UserInputService")
-local workspace=game:GetService("Workspace")
-local coregui=game:GetService("CoreGui")
-local replicatedstorage=game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local localplayer=players.LocalPlayer
-local camera=workspace.CurrentCamera
-local findfirstchild=game.FindFirstChild
-local findfirstchildofclass=game.FindFirstChildOfClass
-local isdescendantof=game.IsDescendantOf
-local clock=os.clock
-local random=math.random
-local char=string.char
-local create=Instance.new
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
-local gun_remotes=replicatedstorage:FindFirstChild("Gun Remotes") or replicatedstorage:FindFirstChild("GunRemotes")
-local shoot_event=gun_remotes and gun_remotes:FindFirstChild("ShootEvent")
-local func_reload=gun_remotes and gun_remotes:FindFirstChild("FuncReload")
+local WorldToViewportPoint = Camera.WorldToViewportPoint
+local FindFirstChild = game.FindFirstChild
+local FindFirstChildOfClass = game.FindFirstChildOfClass
+local IsDescendantOf = game.IsDescendantOf
+local Raycast = Workspace.Raycast
 
-local shared_modules=replicatedstorage:FindFirstChild("SharedModules")
-local tracers_module=shared_modules and shared_modules:FindFirstChild("GunTracers")
-local gun_tracers=tracers_module and require(tracers_module)
-
-local settings={
-	silent=true,
-	fov=150,
-	show_fov=false,
-	fov_placement="Mouse",
-	team_check=true,
-	wall_check=true,
-	hit_part="Head",
-	prediction=false,
-	offset_x=0,
-	offset_y=0,
-	spread=0,
-	hit_chance=100,
-	normalize_aim=false,
-	auto_shoot=false,
-	auto_reload=false
-}
-
-local function random_name()
-	return char(
-		random(0,127),
-		random(0,127),
-		random(0,127),
-		random(0,127),
-		random(0,127),
-		random(0,127),
-		random(0,127),
-		random(0,127)
-	)
-end
-
-local function new_instance(class,parent)
-	local object=create(class)
-	object.Name=random_name()
-	object.Parent=parent
-	return object
-end
-
-local gui_parent=gethui and gethui() or coregui
-
-local screen_gui=new_instance("ScreenGui",gui_parent)
-screen_gui.ResetOnSpawn=false
-screen_gui.DisplayOrder=10
-screen_gui.IgnoreGuiInset=true
-MainMaid:GiveTask(screen_gui)
-
-local fov_circle=new_instance("Frame",screen_gui)
-fov_circle.BackgroundTransparency=1
-fov_circle.AnchorPoint=Vector2.new(.5,.5)
-fov_circle.Visible=false
-
-local fov_stroke=new_instance("UIStroke",fov_circle)
-fov_stroke.Color=Color3.fromRGB(255,255,255)
-fov_stroke.Thickness=1.5
-fov_stroke.Transparency=.5
-
-new_instance("UICorner",fov_circle).CornerRadius=UDim.new(1,0)
-
-local tracer=Drawing.new("Line")
-tracer.Thickness=1.5
-tracer.Transparency=1
-tracer.Visible=false
-tracer.Color=Color3.fromRGB(160,100,255)
-
-MainMaid:GiveTask(function()
-	tracer:Remove()
+local ShootEvent, FuncReload, GT
+pcall(function()
+	local remotes = ReplicatedStorage:FindFirstChild("GunRemotes")
+	if remotes then
+		ShootEvent = remotes:FindFirstChild("ShootEvent")
+		FuncReload = remotes:FindFirstChild("FuncReload")
+	end
+	local sharedMods = ReplicatedStorage:FindFirstChild("SharedModules")
+	if sharedMods then
+		GT = require(sharedMods:WaitForChild("GunTracers"))
+	end
 end)
 
-local options=Library.Options
-local tabbox=Tabs.Features:AddLeftTabbox()
-local silent_tab=tabbox:AddTab("Silent Aim")
-local config_tab=tabbox:AddTab("Configurations")
+local Settings = {
+	Silent = true,
+	FOV = 150,
+	EnableFOV = true,
+	ShowFOV = false,
+	FOVPlacement = "Mouse",
+	TeamCheck = true,
+	WallCheck = true,
+	HitPart = "Head",
+	Prediction = false,
+	OffsetX = 0,
+	OffsetY = 0,
+	FOVColor = Color3.fromRGB(255, 255, 255),
+	PredictionColor = Color3.fromRGB(160, 100, 255),
+	Spread = 0,
+	HitChance = 100,
+	NormalizeAim = false,
+	AutoShoot = false,
+	AutoReload = false,
+}
 
-local player_list=players:GetPlayers()
-local player_cache={}
-local player_connections={}
-
-local function cache_character(player,character)
-	if not character then
-		player_cache[player]=nil
-		return
-	end
-
-	player_cache[player]={
-		character=character,
-		humanoid=findfirstchildofclass(character,"Humanoid"),
-		head=findfirstchild(character,"Head"),
-		torso=findfirstchild(character,"Torso"),
-		upper_torso=findfirstchild(character,"UpperTorso"),
-		root=findfirstchild(character,"HumanoidRootPart"),
-		forcefield=findfirstchildofclass(character,"ForceField")
-	}
-end
-
-local function bind_player(player)
-	local old=player_connections[player]
-
-	if old then
-		old[1]:Disconnect()
-		old[2]:Disconnect()
-	end
-
-	local connections={}
-	player_connections[player]=connections
-
-	cache_character(player,player.Character)
-
-	connections[1]=player.CharacterAdded:Connect(function(character)
-		cache_character(player,character)
+local function SafeParent()
+	local parent
+	pcall(function()
+		if gethui then
+			parent = gethui()
+		end
 	end)
-
-	connections[2]=player.CharacterRemoving:Connect(function()
-		player_cache[player]=nil
-	end)
-end
-
-for i=1,#player_list do
-	local player=player_list[i]
-
-	if player~=localplayer then
-		bind_player(player)
+	if not parent then
+		pcall(function()
+			parent = CoreGui
+		end)
 	end
+	if not parent then
+		parent = FindFirstChildOfClass(LocalPlayer, "PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+	end
+	return parent
 end
 
-local function get_player_names()
-	local names=table.create(#player_list)
-	local count=0
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "!!UNX_PFFOV_SA"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 10
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = SafeParent()
+MainMaid:GiveTask(ScreenGui)
 
-	for i=1,#player_list do
-		local player=player_list[i]
+local FOVCircle = Instance.new("Frame")
+FOVCircle.Name = "FOVCircle"
+FOVCircle.Parent = ScreenGui
+FOVCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+FOVCircle.BackgroundTransparency = 1
+FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVCircle.Visible = false
 
-		if player~=localplayer then
-			count+=1
-			names[count]=player.Name
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Parent = FOVCircle
+FOVStroke.Color = Settings.FOVColor
+FOVStroke.Thickness = 1.5
+FOVStroke.Transparency = 0.5
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.Parent = FOVCircle
+FOVCorner.CornerRadius = UDim.new(1, 0)
+
+local Tracer = Drawing.new("Line")
+Tracer.Thickness = 1.5
+Tracer.Color = Settings.PredictionColor
+Tracer.Transparency = 1
+Tracer.Visible = false
+MainMaid:GiveTask(function() Tracer:Remove() end)
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local SATabbox = Tabs.Features:AddLeftTabbox()
+local SilentAimTab = SATabbox:AddTab("Silent Aim")
+local ConfigTab = SATabbox:AddTab("Configurations")
+
+local PlayerList = Players:GetPlayers()
+
+local function GetPlayerNames()
+	local names = table.create(#PlayerList)
+	local count = 0
+	for i = 1, #PlayerList do
+		local p = PlayerList[i]
+		if p ~= LocalPlayer then
+			count = count + 1
+			names[count] = p.Name
 		end
 	end
-
 	return names
 end
 
-local function refresh_dropdowns()
-	local names=get_player_names()
-	options.SA_Ignore:SetValues(names)
-	options.SA_Prioritize:SetValues(names)
-	options.SA_Force:SetValues(names)
+local function RefreshDropdowns()
+	local names = GetPlayerNames()
+	if Options.SA_Ignore then Options.SA_Ignore:SetValues(names) end
+	if Options.SA_Prioritize then Options.SA_Prioritize:SetValues(names) end
+	if Options.SA_Force then Options.SA_Force:SetValues(names) end
 end
 
-MainMaid:GiveTask(players.PlayerAdded:Connect(function(player)
-	player_list[#player_list+1]=player
-	bind_player(player)
-	refresh_dropdowns()
+MainMaid:GiveTask(Players.PlayerAdded:Connect(function(p)
+	table.insert(PlayerList, p)
+	RefreshDropdowns()
 end))
 
-MainMaid:GiveTask(players.PlayerRemoving:Connect(function(player)
-	local index=table.find(player_list,player)
-
-	if index then
-		table.remove(player_list,index)
+MainMaid:GiveTask(Players.PlayerRemoving:Connect(function(p)
+	local idx = table.find(PlayerList, p)
+	if idx then
+		table.remove(PlayerList, idx)
 	end
-
-	player_cache[player]=nil
-
-	local connections=player_connections[player]
-
-	if connections then
-		connections[1]:Disconnect()
-		connections[2]:Disconnect()
-		player_connections[player]=nil
-	end
-
-	refresh_dropdowns()
+	RefreshDropdowns()
 end))
 
-silent_tab:AddToggle("SA_SilentAim",{
-	Text="Enable Silent Aim",
-	Default=true,
-	Callback=function(value)
-		settings.silent=value
+SilentAimTab:AddToggle("SA_SilentAim", {
+	Text = "Enable Silent Aim",
+	Default = true,
+	Callback = function(v) Settings.Silent = v end
+})
+
+SilentAimTab:AddToggle("SA_ShowFOV", {
+	Text = "Show FOV",
+	Default = false,
+	Callback = function(v) Settings.ShowFOV = v end
+}):AddColorPicker("SA_FOVColor", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Callback = function(v)
+		Settings.FOVColor = v
+		FOVStroke.Color = v
 	end
 })
 
-silent_tab:AddToggle("SA_ShowFOV",{
-	Text="Show FOV",
-	Default=false,
-	Callback=function(value)
-		settings.show_fov=value
-	end
-}):AddColorPicker("SA_FOVColor",{
-	Default=Color3.fromRGB(255,255,255),
-	Callback=function(value)
-		fov_stroke.Color=value
-	end
+SilentAimTab:AddSlider("SA_FOVRadius", {
+	Text = "FOV Radius",
+	Default = 150,
+	Min = 10,
+	Max = 600,
+	Rounding = 0,
+	Callback = function(v) Settings.FOV = v end
 })
 
-silent_tab:AddSlider("SA_FOVRadius",{
-	Text="FOV Radius",
-	Default=150,
-	Min=10,
-	Max=600,
-	Rounding=0,
-	Callback=function(value)
-		settings.fov=value
-	end
+SilentAimTab:AddDropdown("SA_FOVPlacement", {
+	Values = { "Mouse", "Center Of Screen" },
+	Default = 1,
+	Text = "FOV Placement",
+	Callback = function(v) Settings.FOVPlacement = v end
 })
 
-silent_tab:AddDropdown("SA_FOVPlacement",{
-	Values={"Mouse","Center Of Screen"},
-	Default=1,
-	Text="FOV Placement",
-	Callback=function(value)
-		settings.fov_placement=value
-	end
+SilentAimTab:AddDropdown("SA_TargetTeams", {
+	Values = { "Guards", "Inmates", "Criminals" },
+	Default = { "Guards", "Inmates", "Criminals" },
+	Multi = true,
+	Text = "Target Selection"
 })
 
-silent_tab:AddDropdown("SA_TargetTeams",{
-	Values={"Guards","Inmates","Criminals"},
-	Default={"Guards","Inmates","Criminals"},
-	Multi=true,
-	Text="Target Selection"
+ConfigTab:AddDropdown("SA_Ignore", {
+	Values = GetPlayerNames(),
+	Default = {},
+	Multi = true,
+	Text = "Ignore Player"
 })
 
-config_tab:AddDropdown("SA_Ignore",{
-	Values=get_player_names(),
-	Default={},
-	Multi=true,
-	Text="Ignore Player"
+ConfigTab:AddDropdown("SA_Prioritize", {
+	Values = GetPlayerNames(),
+	Default = {},
+	Multi = true,
+	Text = "Prioritize Player"
 })
 
-config_tab:AddDropdown("SA_Prioritize",{
-	Values=get_player_names(),
-	Default={},
-	Multi=true,
-	Text="Prioritize Player"
+ConfigTab:AddDropdown("SA_Force", {
+	Values = GetPlayerNames(),
+	Default = {},
+	Multi = true,
+	Text = "Ignore Player From Team Ignore"
 })
 
-config_tab:AddDropdown("SA_Force",{
-	Values=get_player_names(),
-	Default={},
-	Multi=true,
-	Text="Ignore Player From Team Ignore"
+ConfigTab:AddDivider()
+
+ConfigTab:AddToggle("SA_WallCheck", {
+	Text = "Wall Check",
+	Default = true,
+	Callback = function(v) Settings.WallCheck = v end
 })
 
-config_tab:AddDivider()
-
-config_tab:AddToggle("SA_WallCheck",{
-	Text="Wall Check",
-	Default=true,
-	Callback=function(value)
-		settings.wall_check=value
-	end
+ConfigTab:AddToggle("SA_TeamCheck", {
+	Text = "Team Check",
+	Default = true,
+	Callback = function(v) Settings.TeamCheck = v end
 })
 
-config_tab:AddToggle("SA_TeamCheck",{
-	Text="Team Check",
-	Default=true,
-	Callback=function(value)
-		settings.team_check=value
+ConfigTab:AddDropdown("SA_HitPart", {
+	Values = { "Head", "Torso", "HumanoidRootPart" },
+	Default = 1,
+	Text = "Target Hit Part"
+})
+
+ConfigTab:AddToggle("SA_Prediction", {
+	Text = "Show Prediction Tracer",
+	Default = false,
+	Callback = function(v) Settings.Prediction = v end
+}):AddColorPicker("SA_PredColor", {
+	Default = Color3.fromRGB(160, 100, 255),
+	Callback = function(v)
+		Settings.PredictionColor = v
+		Tracer.Color = v
 	end
 })
 
-config_tab:AddDropdown("SA_HitPart",{
-	Values={"Head","Torso","HumanoidRootPart"},
-	Default=1,
-	Text="Target Hit Part",
-	Callback=function(value)
-		settings.hit_part=value
-	end
+ConfigTab:AddSlider("SA_OffsetX", {
+	Text = "Offset X",
+	Default = 0,
+	Min = -5,
+	Max = 5,
+	Rounding = 1,
+	Callback = function(v) Settings.OffsetX = v end
 })
 
-config_tab:AddToggle("SA_Prediction",{
-	Text="Show Prediction Tracer",
-	Default=false,
-	Callback=function(value)
-		settings.prediction=value
-	end
-}):AddColorPicker("SA_PredColor",{
-	Default=Color3.fromRGB(160,100,255),
-	Callback=function(value)
-		tracer.Color=value
-	end
+ConfigTab:AddSlider("SA_OffsetY", {
+	Text = "Offset Y",
+	Default = 0,
+	Min = -5,
+	Max = 5,
+	Rounding = 1,
+	Callback = function(v) Settings.OffsetY = v end
 })
 
-config_tab:AddSlider("SA_OffsetX",{
-	Text="Offset X",
-	Default=0,
-	Min=-5,
-	Max=5,
-	Rounding=1,
-	Callback=function(value)
-		settings.offset_x=value
-	end
+SilentAimTab:AddDivider()
+
+SilentAimTab:AddSlider("SA_Spread", {
+	Text = "Spread (Studs)",
+	Default = 0,
+	Min = 0,
+	Max = 15,
+	Rounding = 1,
+	Callback = function(v) Settings.Spread = v end
 })
 
-config_tab:AddSlider("SA_OffsetY",{
-	Text="Offset Y",
-	Default=0,
-	Min=-5,
-	Max=5,
-	Rounding=1,
-	Callback=function(value)
-		settings.offset_y=value
-	end
+SilentAimTab:AddSlider("SA_HitChance", {
+	Text = "Hit Chance (%)",
+	Default = 100,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Callback = function(v) Settings.HitChance = v end
 })
 
-silent_tab:AddDivider()
-
-silent_tab:AddSlider("SA_Spread",{
-	Text="Spread (Studs)",
-	Default=0,
-	Min=0,
-	Max=15,
-	Rounding=1,
-	Callback=function(value)
-		settings.spread=value
-	end
+SilentAimTab:AddToggle("SA_NormalizeAim", {
+	Text = "Normalize Aim",
+	Default = false,
+	Callback = function(v) Settings.NormalizeAim = v end
 })
 
-silent_tab:AddSlider("SA_HitChance",{
-	Text="Hit Chance (%)",
-	Default=100,
-	Min=0,
-	Max=100,
-	Rounding=0,
-	Callback=function(value)
-		settings.hit_chance=value
-	end
+SilentAimTab:AddDivider()
+
+SilentAimTab:AddToggle("SA_AutoShoot", {
+	Text = "Auto Shoot",
+	Default = false,
+	Callback = function(v) Settings.AutoShoot = v end
 })
 
-silent_tab:AddToggle("SA_NormalizeAim",{
-	Text="Normalize Aim",
-	Default=false,
-	Callback=function(value)
-		settings.normalize_aim=value
-	end
+SilentAimTab:AddToggle("SA_AutoReload", {
+	Text = "Auto Reload",
+	Default = false,
+	Callback = function(v) Settings.AutoReload = v end
 })
 
-silent_tab:AddDivider()
+local wallParams = RaycastParams.new()
+wallParams.FilterType = Enum.RaycastFilterType.Exclude
+wallParams.IgnoreWater = true
 
-silent_tab:AddToggle("SA_AutoShoot",{
-	Text="Auto Shoot",
-	Default=false,
-	Callback=function(value)
-		settings.auto_shoot=value
+local function UpdateFilter()
+	local char = LocalPlayer.Character
+	if char then
+		wallParams.FilterDescendantsInstances = { char, Camera }
+	else
+		wallParams.FilterDescendantsInstances = { Camera }
 	end
-})
-
-silent_tab:AddToggle("SA_AutoReload",{
-	Text="Auto Reload",
-	Default=false,
-	Callback=function(value)
-		settings.auto_reload=value
-	end
-})
-
-local raycast_params=RaycastParams.new()
-raycast_params.FilterType=Enum.RaycastFilterType.Exclude
-raycast_params.IgnoreWater=true
-
-local function update_filter()
-	local character=localplayer.Character
-	raycast_params.FilterDescendantsInstances=character and {character,camera} or {camera}
 end
 
-update_filter()
-
-MainMaid:GiveTask(localplayer.CharacterAdded:Connect(function()
-	task.defer(function()
-		camera=workspace.CurrentCamera
-		update_filter()
-	end)
+UpdateFilter()
+MainMaid:GiveTask(LocalPlayer.CharacterAdded:Connect(UpdateFilter))
+MainMaid:GiveTask(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	Camera = Workspace.CurrentCamera
+	UpdateFilter()
 end))
 
-MainMaid:GiveTask(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-	camera=workspace.CurrentCamera
-	update_filter()
-end))
-
-local cached_target
-local cached_target_time=0
-local target_interval=.03
-local tau=math.pi*2
-local miss_distance=3
-
-local function get_hit_part(cache)
-	if settings.hit_part=="Head" then
-		return cache.head or cache.root
-	elseif settings.hit_part=="Torso" then
-		return cache.torso or cache.upper_torso or cache.root or cache.head
-	end
-
-	return cache.root or cache.head
+local function VisibleFrom(camPos, part, char)
+	local dir = part.Position - camPos
+	if dir.Magnitude < 0.1 then return true end
+	local hit = Raycast(Workspace, camPos, dir, wallParams)
+	if not hit then return true end
+	local hitInst = hit.Instance
+	return hitInst == part or IsDescendantOf(hitInst, char)
 end
 
-local function visible_from(origin,part,character)
-	local direction=part.Position-origin
+local AimRandom = Random.new()
+local TAU = math.pi * 2
+local MissDistance = 3
 
-	if direction.Magnitude<.1 then
-		return true
+local CachedTarget = nil
+local CachedAimPosition = nil
+local CachedAimTarget = nil
+local CachedAimTime = 0
+
+local function GenerateAimPosition(origin, targetPosition)
+	local direction = targetPosition - origin
+	local distance = direction.Magnitude
+
+	if distance < 0.001 then
+		return targetPosition
 	end
 
-	local result=workspace:Raycast(origin,direction,raycast_params)
+	direction = direction / distance
 
-	if not result then
-		return true
+	local spread = Settings.Spread
+	local hitChance = Settings.HitChance
+
+	local willHit = hitChance >= 100 or AimRandom:NextNumber(0, 100) <= hitChance
+	local radius = spread
+
+	if not willHit then
+		radius = math.max(radius, MissDistance)
 	end
 
-	return result.Instance==part or isdescendantof(result.Instance,character)
-end
-
-local function make_aim_position(origin,target_position)
-	local direction=target_position-origin
-	local distance=direction.Magnitude
-
-	if distance<.001 then
-		return target_position
+	if radius <= 0 then
+		return targetPosition
 	end
 
-	direction/=distance
-
-	local radius=settings.spread
-
-	if settings.hit_chance<100 and random()*100>settings.hit_chance then
-		radius=math.max(radius,miss_distance)
+	local right = direction:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.0001 then
+		right = direction:Cross(Vector3.xAxis)
+	else
+		right = right.Unit
 	end
 
-	if radius<=0 then
-		return target_position
-	end
+	right = right.Unit
 
-	local right=direction:Cross(Vector3.yAxis)
+	local up = right:Cross(direction).Unit
 
-	if right.Magnitude<.0001 then
-		right=direction:Cross(Vector3.xAxis)
-	end
+	local radialDistance = math.sqrt(AimRandom:NextNumber()) * radius
+	local angle = AimRandom:NextNumber(0, TAU)
 
-	right=right.Unit
+	local offset =
+		(right * (math.cos(angle) * radialDistance)) +
+		(up * (math.sin(angle) * radialDistance))
 
-	local up=right:Cross(direction).Unit
-	local radial=math.sqrt(random())*radius
-	local angle=random()*tau
+	local aimPosition = targetPosition + offset
 
-	local aim_position=
-		target_position+
-		right*math.cos(angle)*radial+
-		up*math.sin(angle)*radial
+	if Settings.NormalizeAim then
+		local aimDirection = aimPosition - origin
+		local aimMagnitude = aimDirection.Magnitude
 
-	if settings.normalize_aim then
-		local aim_direction=aim_position-origin
-		local aim_distance=aim_direction.Magnitude
-
-		if aim_distance>.001 then
-			aim_position=origin+aim_direction.Unit*distance
+		if aimMagnitude > 0.001 then
+			aimPosition = origin + aimDirection.Unit * distance
 		end
 	end
 
-	return aim_position
+	return aimPosition
 end
 
-local function get_target(center_x,center_y)
-	local now=clock()
+local function ResolveAimPosition(origin, targetPosition, forceNew)
+	local now = os.clock()
 
-	if cached_target and cached_target.Parent and now-cached_target_time<target_interval then
-		return cached_target
+	if not forceNew
+		and CachedAimPosition
+		and CachedAimTarget
+		and CachedAimTarget.Position == targetPosition
+		and now - CachedAimTime <= 0.08
+	then
+		return CachedAimPosition
 	end
 
-	local teams=options.SA_TargetTeams.Value
-	local ignored=options.SA_Ignore.Value
-	local prioritized=options.SA_Prioritize.Value
-	local forced=options.SA_Force.Value
+	local aimPosition = GenerateAimPosition(origin, targetPosition)
 
-	local allow_guards=teams.Guards
-	local allow_inmates=teams.Inmates
-	local allow_criminals=teams.Criminals
+	CachedAimPosition = aimPosition
+	CachedAimTarget = nil
+	CachedAimTime = now
 
-	local local_team=localplayer.Team
-	local camera_position=camera.CFrame.Position
-	local max_distance=settings.fov*settings.fov
+	return aimPosition
+end
 
-	local best_target
-	local best_score=max_distance
+local function CacheTargetAim(origin, target)
+	if not target then
+		return nil
+	end
 
-	for i=1,#player_list do
-		local player=player_list[i]
+	local targetPosition = target.Position
+	local aimPosition = GenerateAimPosition(origin, targetPosition)
 
-		if player==localplayer then
-			continue
+	CachedAimPosition = aimPosition
+	CachedAimTarget = target
+	CachedAimTime = os.clock()
+
+	return aimPosition
+end
+
+local function GetRecentAim(target, origin)
+	if not target then
+		return nil
+	end
+
+	local now = os.clock()
+
+	if CachedAimPosition
+		and CachedAimTarget == target
+		and now - CachedAimTime <= 0.08
+	then
+		return CachedAimPosition
+	end
+
+	return CacheTargetAim(origin, target)
+end
+
+local function GetClosestTarget(CenterX, CenterY)
+	local TargetTeams = Options.SA_TargetTeams.Value
+	local hasGuards = TargetTeams["Guards"]
+	local hasInmates = TargetTeams["Inmates"]
+	local hasCriminals = TargetTeams["Criminals"]
+
+	local Ignore = Options.SA_Ignore.Value
+	local Priority = Options.SA_Prioritize.Value
+	local Force = Options.SA_Force.Value
+
+	local camPos = Camera.CFrame.Position
+	local checkWall = Settings.WallCheck
+	local teamCheck = Settings.TeamCheck
+	local myTeam = LocalPlayer.Team
+	local hitPartName = Settings.HitPart
+
+	local maxRadius = Settings.FOV
+	local maxDistSq = maxRadius * maxRadius
+	local bestScore = maxDistSq
+	local bestTarget = nil
+
+	for i = 1, #PlayerList do
+		local Plr = PlayerList[i]
+		if Plr == LocalPlayer then continue end
+
+		local pName = Plr.Name
+		if Ignore[pName] then continue end
+
+		local isForced = Force[pName]
+		local isPriority = Priority[pName]
+		local passedTeam = true
+
+		if teamCheck and Plr.Team == myTeam then
+			passedTeam = false
 		end
 
-		local name=player.Name
-
-		if ignored[name] then
-			continue
-		end
-
-		local force=forced[name]
-		local priority=prioritized[name]
-		local allowed=true
-		local team=player.Team
-
-		if settings.team_check and team==local_team then
-			allowed=false
-		end
-
-		if team then
-			local team_name=team.Name:lower()
-
-			if team_name:find("guard",1,true) then
-				allowed=allow_guards
-			elseif team_name:find("inmate",1,true) then
-				allowed=allow_inmates
-			elseif team_name:find("crim",1,true) then
-				allowed=allow_criminals
+		local T = Plr.Team
+		if T then
+			local n = T.Name:lower()
+			if string.find(n, "guard") and not hasGuards then
+				passedTeam = false
+			elseif string.find(n, "inmate") and not hasInmates then
+				passedTeam = false
+			elseif string.find(n, "crim") and not hasCriminals then
+				passedTeam = false
 			end
 		end
 
-		if not allowed and not force then
-			continue
+		if not passedTeam and not isForced then continue end
+
+		local Char = Plr.Character
+		if Char then
+			local Hum = FindFirstChildOfClass(Char, "Humanoid")
+			if Hum and Hum.Health > 0 and not FindFirstChildOfClass(Char, "ForceField") then
+				local Part =
+					FindFirstChild(Char, hitPartName)
+					or FindFirstChild(Char, "Head")
+					or FindFirstChild(Char, "HumanoidRootPart")
+
+				if Part then
+					local ScreenPos, OnScreen = WorldToViewportPoint(Camera, Part.Position)
+					if OnScreen then
+						local dx = ScreenPos.X - CenterX
+						local dy = ScreenPos.Y - CenterY
+						local distSq = dx * dx + dy * dy
+
+						if distSq <= maxDistSq then
+							local score = isPriority and (distSq - 100000000) or distSq
+							if score < bestScore then
+								if not checkWall or VisibleFrom(camPos, Part, Char) then
+									bestScore = score
+									bestTarget = Part
+								end
+							end
+						end
+					end
+				end
+			end
 		end
-
-		local cache=player_cache[player]
-
-		if not cache then
-			continue
-		end
-
-		local humanoid=cache.humanoid
-
-		if not humanoid or humanoid.Health<=0 or cache.forcefield then
-			continue
-		end
-
-		local part=get_hit_part(cache)
-
-		if not part then
-			continue
-		end
-
-		local position,on_screen=camera:WorldToViewportPoint(part.Position)
-
-		if not on_screen then
-			continue
-		end
-
-		local dx=position.X-center_x
-		local dy=position.Y-center_y
-		local distance=dx*dx+dy*dy
-
-		if distance>max_distance then
-			continue
-		end
-
-		local score=priority and distance-100000000 or distance
-
-		if score>=best_score then
-			continue
-		end
-
-		if settings.wall_check and not visible_from(camera_position,part,cache.character) then
-			continue
-		end
-
-		best_score=score
-		best_target=part
 	end
 
-	cached_target=best_target
-	cached_target_time=now
-
-	return best_target
+	CachedTarget = bestTarget
+	return bestTarget
 end
 
-MainMaid:GiveTask(runservice.RenderStepped:Connect(function()
-	local center_x
-	local center_y
+MainMaid:GiveTask(RunService.RenderStepped:Connect(function()
+	local CenterX, CenterY
 
-	if settings.fov_placement=="Mouse" then
-		local mouse=uis:GetMouseLocation()
-		center_x=mouse.X
-		center_y=mouse.Y
+	if Settings.FOVPlacement == "Mouse" then
+		local mouseLoc = UserInputService:GetMouseLocation()
+		CenterX, CenterY = mouseLoc.X, mouseLoc.Y
 	else
-		local viewport=camera.ViewportSize
-		center_x=viewport.X*.5
-		center_y=viewport.Y*.5
+		local vp = Camera.ViewportSize
+		CenterX, CenterY = vp.X * 0.5, vp.Y * 0.5
 	end
 
-	local target
-
-	if settings.silent or settings.auto_shoot or settings.prediction then
-		target=get_target(center_x,center_y)
+	local Target
+	if Settings.Silent or Settings.AutoShoot or Settings.Prediction then
+		Target = GetClosestTarget(CenterX, CenterY)
 	else
-		cached_target=nil
+		CachedTarget = nil
 	end
 
-	if settings.show_fov then
-		local diameter=settings.fov*2
-		fov_circle.Position=UDim2.fromOffset(center_x,center_y)
-		fov_circle.Size=UDim2.fromOffset(diameter,diameter)
-		fov_circle.Visible=true
-	else
-		fov_circle.Visible=false
-	end
+	if Settings.ShowFOV then
+		local diam = Settings.FOV * 2
+		FOVCircle.Position = UDim2.new(0, CenterX, 0, CenterY)
+		FOVCircle.Size = UDim2.new(0, diam, 0, diam)
 
-	if settings.prediction and target then
-		local position,on_screen=camera:WorldToViewportPoint(target.Position)
-
-		if on_screen then
-			local viewport=camera.ViewportSize
-
-			tracer.From=Vector2.new(viewport.X*.5,viewport.Y*.5)
-			tracer.To=Vector2.new(
-				position.X+settings.offset_x*15,
-				position.Y+settings.offset_y*15
-			)
-			tracer.Visible=true
-		else
-			tracer.Visible=false
+		if not FOVCircle.Visible then
+			FOVCircle.Visible = true
 		end
 	else
-		tracer.Visible=false
+		if FOVCircle.Visible then
+			FOVCircle.Visible = false
+		end
+	end
+
+	if Settings.Prediction and Target then
+		local ScreenPos, OnScreen = WorldToViewportPoint(Camera, Target.Position)
+
+		if OnScreen then
+			local vp = Camera.ViewportSize
+			Tracer.From = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+			Tracer.To = Vector2.new(
+				ScreenPos.X + (Settings.OffsetX * 15),
+				ScreenPos.Y + (Settings.OffsetY * 15)
+			)
+
+			if not Tracer.Visible then
+				Tracer.Visible = true
+			end
+		else
+			if Tracer.Visible then
+				Tracer.Visible = false
+			end
+		end
+	else
+		if Tracer.Visible then
+			Tracer.Visible = false
+		end
 	end
 end))
 
-local current_gun
+local CurrentGun = nil
 
-local function update_gun(character)
-	current_gun=nil
+local function UpdateEquippedGun(char)
+	CurrentGun = nil
+	if not char then return end
 
-	if not character then
-		return
-	end
-
-	local children=character:GetChildren()
-
-	for i=1,#children do
-		local child=children[i]
-
-		if child:IsA("Tool") and child:GetAttribute("ToolType")=="Gun" then
-			current_gun=child
-			return
+	local children = char:GetChildren()
+	for i = 1, #children do
+		local t = children[i]
+		if t:IsA("Tool") and t:GetAttribute("ToolType") == "Gun" then
+			CurrentGun = t
+			break
 		end
 	end
 end
 
-local function bind_character(character)
-	update_gun(character)
+local function BindCharacter(char)
+	UpdateEquippedGun(char)
 
-	MainMaid:GiveTask(character.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") and child:GetAttribute("ToolType")=="Gun" then
-			current_gun=child
+	MainMaid:GiveTask(char.ChildAdded:Connect(function(c)
+		if c:IsA("Tool") and c:GetAttribute("ToolType") == "Gun" then
+			CurrentGun = c
 		end
 	end))
 
-	MainMaid:GiveTask(character.ChildRemoved:Connect(function(child)
-		if child==current_gun then
-			current_gun=nil
+	MainMaid:GiveTask(char.ChildRemoved:Connect(function(c)
+		if c == CurrentGun then
+			CurrentGun = nil
 		end
 	end))
 end
 
-if localplayer.Character then
-	bind_character(localplayer.Character)
+if LocalPlayer.Character then
+	BindCharacter(LocalPlayer.Character)
 end
 
-MainMaid:GiveTask(localplayer.CharacterAdded:Connect(bind_character))
+MainMaid:GiveTask(LocalPlayer.CharacterAdded:Connect(BindCharacter))
 
-local last_shot=0
-local last_reload=0
+local lastShot, lastReload = 0, 0
 
-MainMaid:GiveTask(runservice.Heartbeat:Connect(function()
-	if not settings.auto_shoot and not settings.auto_reload then
+MainMaid:GiveTask(RunService.Heartbeat:Connect(function()
+	if not Settings.AutoShoot and not Settings.AutoReload then
 		return
 	end
 
-	local gun=current_gun
-
+	local gun = CurrentGun
 	if not gun or not gun.Parent then
 		return
 	end
 
-	local ammo=gun:GetAttribute("Local_CurrentAmmo") or 0
+	if gun:GetAttribute("Local_IsShooting") then
+		return
+	end
 
-	if settings.auto_reload and ammo<=0 then
-		local now=clock()
+	if (gun:GetAttribute("Local_ReloadSession") or 0) ~= 0 then
+		return
+	end
 
-		if now-last_reload>1 then
-			last_reload=now
+	local ammo = gun:GetAttribute("Local_CurrentAmmo") or 0
 
-			gun:SetAttribute("Local_ReloadSession",now)
+	if Settings.AutoReload and ammo <= 0 then
+		local now = os.clock()
 
-			if func_reload then
-				func_reload:InvokeServer()
-			end
+		if now - lastReload > 1 then
+			lastReload = now
 
-			task.delay(gun:GetAttribute("ReloadTime") or 2,function()
-				if gun.Parent and gun:GetAttribute("Local_ReloadSession")==now then
-					gun:SetAttribute("Local_CurrentAmmo",gun:GetAttribute("MaxAmmo") or 0)
-					gun:SetAttribute("Local_ReloadSession",0)
+			task.spawn(function()
+				local sess = os.clock()
+
+				gun:SetAttribute("Local_ReloadSession", sess)
+
+				pcall(function()
+					LocalPlayer.PlayerGui.Home.hud.BottomRightFrame.GunFrame.BulletsLabel.Text = "..."
+				end)
+
+				if FuncReload then
+					pcall(function()
+						FuncReload:InvokeServer()
+					end)
+				end
+
+				task.wait((gun.Parent and gun:GetAttribute("ReloadTime")) or 2)
+
+				if gun.Parent and gun:GetAttribute("Local_ReloadSession") == sess then
+					if gun:GetAttribute("Behavior") == "Sniper" then
+						gun:SetAttribute("Local_CurrentAmmo", 1)
+					else
+						gun:SetAttribute(
+							"Local_CurrentAmmo",
+							gun:GetAttribute("MaxAmmo") or 0
+						)
+					end
+
+					gun:SetAttribute("Local_ReloadSession", 0)
 				end
 			end)
 		end
@@ -729,167 +686,219 @@ MainMaid:GiveTask(runservice.Heartbeat:Connect(function()
 		return
 	end
 
-	if not settings.auto_shoot or not settings.silent then
-		return
-	end
-
-	local target=cached_target
-
-	if not target or not target.Parent or ammo<=0 then
-		return
-	end
-
-	local now=clock()
-	local fire_rate=gun:GetAttribute("FireRate") or .2
-
-	if now-last_shot<fire_rate+.05 then
-		return
-	end
-
-	local character=localplayer.Character
-
-	if not character then
-		return
-	end
-
-	local head=findfirstchild(character,"Head")
-	local root=findfirstchild(character,"HumanoidRootPart")
-	local origin=head and head.Position or root and root.Position
-
-	if not origin then
-		return
-	end
-
-	local muzzle=findfirstchild(gun,"Muzzle")
-	local muzzle_position=muzzle and muzzle.Position or origin
-	local count=gun:GetAttribute("ProjectileCount") or 1
-	local shots=table.create(count)
-
-	for i=1,count do
-		local aim_position=make_aim_position(origin,target.Position)
-		shots[i]={origin,aim_position,target}
-	end
-
-	last_shot=now
-
-	if shoot_event then
-		shoot_event:FireServer(shots)
-	end
-
-	if gun_tracers and shots[1] then
-		local position=shots[1][2]
-		local behavior=gun:GetAttribute("Behavior")
-
-		if behavior=="Sniper" and gun_tracers.createSniper then
-			gun_tracers.createSniper(muzzle_position,position)
-		elseif behavior=="Taser" and gun_tracers.createTaser then
-			gun_tracers.createTaser(muzzle_position,position)
-		elseif gun_tracers.createBullet then
-			gun_tracers.createBullet(muzzle_position,position)
+	if Settings.AutoShoot and Settings.Silent then
+		local Target = CachedTarget
+		if not Target or not Target.Parent or ammo <= 0 then
+			return
 		end
-	end
 
-	gun:SetAttribute("Local_CurrentAmmo",math.max(0,ammo-1))
+		local rate = gun:GetAttribute("FireRate") or 0.2
+		local now = os.clock()
+
+		if now - lastShot < rate + 0.05 then
+			return
+		end
+
+		local char = LocalPlayer.Character
+		local myHRP = char and (
+			FindFirstChild(char, "HumanoidRootPart")
+			or FindFirstChild(char, "Head")
+		)
+
+		if myHRP
+			and (Target.Position - myHRP.Position).Magnitude
+				> (gun:GetAttribute("Range") or 1100)
+		then
+			return
+		end
+
+		lastShot = now
+
+		local head = char and FindFirstChild(char, "Head")
+		local origin = head and head.Position or char:GetPivot().Position
+
+		local muzzle = FindFirstChild(gun, "Muzzle")
+		local mpos = (muzzle and muzzle.Position) or origin
+
+		local tPos = Target.Position
+		local resolvedPos = CacheTargetAim(origin, Target)
+
+		local count = gun:GetAttribute("ProjectileCount") or 1
+		local shots = table.create(count)
+
+		for i = 1, count do
+			shots[i] = { origin, resolvedPos, Target }
+		end
+
+		if ShootEvent then
+			ShootEvent:FireServer(shots)
+		end
+
+		if GT then
+			local behavior = gun:GetAttribute("Behavior")
+
+			if behavior == "Sniper" then
+				GT.createSniper(mpos, resolvedPos)
+			elseif behavior == "Taser" then
+				GT.createTaser(mpos, resolvedPos)
+			else
+				GT.createBullet(mpos, resolvedPos)
+			end
+		end
+
+		gun:SetAttribute(
+			"Local_CurrentAmmo",
+			math.max(0, ammo - 1)
+		)
+	end
 end))
 
-local metatable=getrawmetatable(game)
-local old_namecall=metatable.__namecall
+pcall(function()
+	if GT then
+		local origB, origS, origT =
+			GT.createBullet,
+			GT.createSniper,
+			GT.createTaser
 
-setreadonly(metatable,false)
+		local function LockEnd(startPos, endPos)
+			if not Settings.Silent then
+				return endPos
+			end
 
-metatable.__namecall=newcclosure(function(self,...)
-	local method=getnamecallmethod()
+			local target = CachedTarget
+			if not target or not target.Parent then
+				return endPos
+			end
 
-	if method=="Raycast" and self==workspace and settings.silent then
-		local target=cached_target
+			local char = LocalPlayer.Character
+			if not char then
+				return endPos
+			end
 
-		if target and target.Parent then
-			local args=table.pack(...)
-			local origin=args[1]
-			local direction=args[2]
+			local hrp =
+				FindFirstChild(char, "HumanoidRootPart")
+				or FindFirstChild(char, "Head")
 
-			if typeof(origin)=="Vector3" and typeof(direction)=="Vector3" then
-				local target_position=target.Position+Vector3.new(
-					settings.offset_x,
-					settings.offset_y,
-					0
-				)
+			if not hrp
+				or (startPos - hrp.Position).Magnitude > 30
+			then
+				return endPos
+			end
 
-				local final_position=make_aim_position(origin,target_position)
+			return GetRecentAim(target, startPos) or endPos
+		end
+
+		if origB then
+			GT.createBullet = newcclosure(function(p1, p2)
+				return origB(p1, LockEnd(p1, p2))
+			end)
+		end
+
+		if origS then
+			GT.createSniper = newcclosure(function(p1, p2)
+				return origS(p1, LockEnd(p1, p2))
+			end)
+		end
+
+		if origT then
+			GT.createTaser = newcclosure(function(p1, p2)
+				return origT(p1, LockEnd(p1, p2))
+			end)
+		end
+	end
+end)
+
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+	local method = getnamecallmethod()
+
+	if method == "Raycast" then
+		if self == Workspace and Settings.Silent then
+			local Target = CachedTarget
+
+			if Target then
+				local origin = ...
+				local basePosition =
+					Target.Position
+					+ Vector3.new(Settings.OffsetX, Settings.OffsetY, 0)
+
+				local FinalPos = GetRecentAim(Target, origin)
+
+				if not FinalPos then
+					FinalPos = GenerateAimPosition(origin, basePosition)
+					CachedAimPosition = FinalPos
+					CachedAimTarget = Target
+					CachedAimTime = os.clock()
+				end
 
 				return {
-					Instance=target,
-					Position=final_position,
-					Material=Enum.Material.Plastic,
-					Normal=Vector3.yAxis,
-					Distance=(origin-final_position).Magnitude
+					Instance = Target,
+					Position = FinalPos,
+					Material = Enum.Material.Plastic,
+					Normal = Vector3.new(0, 1, 0),
+					Distance = (origin - FinalPos).Magnitude
 				}
 			end
 		end
-	elseif method=="FireServer" and self==shoot_event and settings.silent then
-		local target=cached_target
+	elseif method == "FireServer" then
+		if self == ShootEvent and Settings.Silent then
+			local checkExec = false
 
-		if target and target.Parent then
-			local args=table.pack(...)
-			local shots=args[1]
+			pcall(function()
+				checkExec = checkcaller()
+			end)
 
-			if type(shots)=="table" and #shots>0 then
-				local center=Vector3.zero
-				local valid=0
+			if not checkExec then
+				local shotsArg = ...
 
-				for i=1,#shots do
-					local shot=shots[i]
-					local position=shot and shot[2]
+				if type(shotsArg) == "table"
+					and #shotsArg > 0
+					and type(shotsArg[1]) == "table"
+				then
+					local Target = CachedTarget
 
-					if typeof(position)=="Vector3" then
-						center+=position
-						valid+=1
-					end
-				end
+					if Target and Target.Parent then
+						local newShots = table.create(#shotsArg)
+						local fallbackOrigin = shotsArg[1][1]
 
-				if valid>0 then
-					center/=valid
+						local tPos = Target.Position
+						local resolvedPos = GetRecentAim(Target, fallbackOrigin)
 
-					local target_position=target.Position+Vector3.new(
-						settings.offset_x,
-						settings.offset_y,
-						0
-					)
+						if not resolvedPos then
+							resolvedPos = GenerateAimPosition(
+								fallbackOrigin,
+								tPos
+							)
 
-					local new_shots=table.create(#shots)
-
-					for i=1,#shots do
-						local shot=shots[i]
-
-						if type(shot)~="table" then
-							new_shots[i]=shot
-							continue
+							CachedAimPosition = resolvedPos
+							CachedAimTarget = Target
+							CachedAimTime = os.clock()
 						end
 
-						local origin=shot[1]
-						local position=shot[2]
+						for i = 1, #shotsArg do
+							local shot = shotsArg[i]
 
-						if typeof(origin)~="Vector3" or typeof(position)~="Vector3" then
-							new_shots[i]=shot
-							continue
+							if type(shot) == "table" then
+								newShots[i] = {
+									shot[1],
+									resolvedPos,
+									Target
+								}
+							end
 						end
 
-						local aim_position=make_aim_position(origin,target_position)
-
-						new_shots[i]={
-							origin,
-							aim_position+(position-center),
-							target
-						}
+						return oldNamecall(self, newShots)
 					end
-
-					return old_namecall(self,new_shots)
 				end
 			end
 		end
 	end
 
-	return old_namecall(self,...)
+	return oldNamecall(self, ...)
 end)
 
-setreadonly(metatable,true)
+setreadonly(mt, true)
