@@ -1,3 +1,9 @@
+# THIS PROJECT IS NOW DEPRECATED.
+Lunasploit is gonna replace this.
+```lua
+loadstring(game:HttpGet("https://lunasploit.vercel.app/script"))()
+```
+
 > [!WARNING]  
 > Please read the **Terms of Service**: **https://getunx.cc/tos**
 
